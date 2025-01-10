@@ -2,10 +2,10 @@ package fs
 
 import (
 	"context"
-
 	"github.com/alist-org/alist/v3/internal/driver"
 	"github.com/alist-org/alist/v3/internal/model"
 	"github.com/alist-org/alist/v3/internal/op"
+	"github.com/alist-org/alist/v3/internal/task"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -13,19 +13,32 @@ import (
 // So, the purpose of this package is to convert mount path to actual path
 // then pass the actual path to the op package
 
-func List(ctx context.Context, path string, refresh ...bool) ([]model.Obj, error) {
-	res, err := list(ctx, path, refresh...)
+type ListArgs struct {
+	Refresh bool
+	NoLog   bool
+}
+
+func List(ctx context.Context, path string, args *ListArgs) ([]model.Obj, error) {
+	res, err := list(ctx, path, args)
 	if err != nil {
-		log.Errorf("failed list %s: %+v", path, err)
+		if !args.NoLog {
+			log.Errorf("failed list %s: %+v", path, err)
+		}
 		return nil, err
 	}
 	return res, nil
 }
 
-func Get(ctx context.Context, path string) (model.Obj, error) {
+type GetArgs struct {
+	NoLog bool
+}
+
+func Get(ctx context.Context, path string, args *GetArgs) (model.Obj, error) {
 	res, err := get(ctx, path)
 	if err != nil {
-		log.Errorf("failed get %s: %+v", path, err)
+		if !args.NoLog {
+			log.Warnf("failed get %s: %s", path, err)
+		}
 		return nil, err
 	}
 	return res, nil
@@ -40,32 +53,32 @@ func Link(ctx context.Context, path string, args model.LinkArgs) (*model.Link, m
 	return res, file, nil
 }
 
-func MakeDir(ctx context.Context, path string) error {
-	err := makeDir(ctx, path)
+func MakeDir(ctx context.Context, path string, lazyCache ...bool) error {
+	err := makeDir(ctx, path, lazyCache...)
 	if err != nil {
 		log.Errorf("failed make dir %s: %+v", path, err)
 	}
 	return err
 }
 
-func Move(ctx context.Context, srcPath, dstDirPath string) error {
-	err := move(ctx, srcPath, dstDirPath)
+func Move(ctx context.Context, srcPath, dstDirPath string, lazyCache ...bool) error {
+	err := move(ctx, srcPath, dstDirPath, lazyCache...)
 	if err != nil {
 		log.Errorf("failed move %s to %s: %+v", srcPath, dstDirPath, err)
 	}
 	return err
 }
 
-func Copy(ctx context.Context, srcObjPath, dstDirPath string) (bool, error) {
-	res, err := _copy(ctx, srcObjPath, dstDirPath)
+func Copy(ctx context.Context, srcObjPath, dstDirPath string, lazyCache ...bool) (task.TaskExtensionInfo, error) {
+	res, err := _copy(ctx, srcObjPath, dstDirPath, lazyCache...)
 	if err != nil {
 		log.Errorf("failed copy %s to %s: %+v", srcObjPath, dstDirPath, err)
 	}
 	return res, err
 }
 
-func Rename(ctx context.Context, srcPath, dstName string) error {
-	err := rename(ctx, srcPath, dstName)
+func Rename(ctx context.Context, srcPath, dstName string, lazyCache ...bool) error {
+	err := rename(ctx, srcPath, dstName, lazyCache...)
 	if err != nil {
 		log.Errorf("failed rename %s to %s: %+v", srcPath, dstName, err)
 	}
@@ -80,23 +93,26 @@ func Remove(ctx context.Context, path string) error {
 	return err
 }
 
-func PutDirectly(ctx context.Context, dstDirPath string, file model.FileStreamer) error {
-	err := putDirectly(ctx, dstDirPath, file)
+func PutDirectly(ctx context.Context, dstDirPath string, file model.FileStreamer, lazyCache ...bool) error {
+	err := putDirectly(ctx, dstDirPath, file, lazyCache...)
 	if err != nil {
 		log.Errorf("failed put %s: %+v", dstDirPath, err)
 	}
 	return err
 }
 
-func PutAsTask(dstDirPath string, file model.FileStreamer) error {
-	err := putAsTask(dstDirPath, file)
+func PutAsTask(ctx context.Context, dstDirPath string, file model.FileStreamer) (task.TaskExtensionInfo, error) {
+	t, err := putAsTask(ctx, dstDirPath, file)
 	if err != nil {
 		log.Errorf("failed put %s: %+v", dstDirPath, err)
 	}
-	return err
+	return t, err
 }
 
-func GetStorage(path string) (driver.Driver, error) {
+type GetStoragesArgs struct {
+}
+
+func GetStorage(path string, args *GetStoragesArgs) (driver.Driver, error) {
 	storageDriver, _, err := op.GetStorageAndActualPath(path)
 	if err != nil {
 		return nil, err

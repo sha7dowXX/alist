@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"time"
+	"strings"
 
 	"github.com/alist-org/alist/v3/internal/driver"
 	"github.com/alist-org/alist/v3/internal/model"
@@ -14,10 +14,10 @@ import (
 )
 
 type SMB struct {
+	lastConnTime int64
 	model.Storage
 	Addition
-	fs           *smb2.Share
-	lastConnTime time.Time
+	fs *smb2.Share
 }
 
 func (d *SMB) Config() driver.Config {
@@ -25,14 +25,12 @@ func (d *SMB) Config() driver.Config {
 }
 
 func (d *SMB) GetAddition() driver.Additional {
-	return d.Addition
+	return &d.Addition
 }
 
-func (d *SMB) Init(ctx context.Context, storage model.Storage) error {
-	d.Storage = storage
-	err := utils.Json.UnmarshalFromString(d.Storage.Addition, &d.Addition)
-	if err != nil {
-		return err
+func (d *SMB) Init(ctx context.Context) error {
+	if strings.Index(d.Addition.Address, ":") < 0 {
+		d.Addition.Address = d.Addition.Address + ":445"
 	}
 	return d.initFS()
 }
@@ -48,7 +46,7 @@ func (d *SMB) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 	if err := d.checkConn(); err != nil {
 		return nil, err
 	}
-	fullPath := d.getSMBPath(dir)
+	fullPath := dir.GetPath()
 	rawFiles, err := d.fs.ReadDir(fullPath)
 	if err != nil {
 		d.cleanLastConnTime()
@@ -63,6 +61,7 @@ func (d *SMB) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 				Modified: f.ModTime(),
 				Size:     f.Size(),
 				IsFolder: f.IsDir(),
+				Ctime:    f.(*smb2.FileStat).CreationTime,
 			},
 		}
 		files = append(files, &file)
@@ -70,32 +69,28 @@ func (d *SMB) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 	return files, nil
 }
 
-//func (d *SMB) Get(ctx context.Context, path string) (model.Obj, error) {
-//	// this is optional
-//	return nil, errs.NotImplement
-//}
-
 func (d *SMB) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	if err := d.checkConn(); err != nil {
 		return nil, err
 	}
-	fullPath := d.getSMBPath(file)
+	fullPath := file.GetPath()
 	remoteFile, err := d.fs.Open(fullPath)
 	if err != nil {
 		d.cleanLastConnTime()
 		return nil, err
 	}
+	link := &model.Link{
+		MFile: remoteFile,
+	}
 	d.updateLastConnTime()
-	return &model.Link{
-		Data: remoteFile,
-	}, nil
+	return link, nil
 }
 
 func (d *SMB) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
 	if err := d.checkConn(); err != nil {
 		return err
 	}
-	fullPath := filepath.Join(d.getSMBPath(parentDir), dirName)
+	fullPath := filepath.Join(parentDir.GetPath(), dirName)
 	err := d.fs.MkdirAll(fullPath, 0700)
 	if err != nil {
 		d.cleanLastConnTime()
@@ -109,8 +104,8 @@ func (d *SMB) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
 	if err := d.checkConn(); err != nil {
 		return err
 	}
-	srcPath := d.getSMBPath(srcObj)
-	dstPath := filepath.Join(d.getSMBPath(dstDir), srcObj.GetName())
+	srcPath := srcObj.GetPath()
+	dstPath := filepath.Join(dstDir.GetPath(), srcObj.GetName())
 	err := d.fs.Rename(srcPath, dstPath)
 	if err != nil {
 		d.cleanLastConnTime()
@@ -124,7 +119,7 @@ func (d *SMB) Rename(ctx context.Context, srcObj model.Obj, newName string) erro
 	if err := d.checkConn(); err != nil {
 		return err
 	}
-	srcPath := d.getSMBPath(srcObj)
+	srcPath := srcObj.GetPath()
 	dstPath := filepath.Join(filepath.Dir(srcPath), newName)
 	err := d.fs.Rename(srcPath, dstPath)
 	if err != nil {
@@ -139,8 +134,8 @@ func (d *SMB) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
 	if err := d.checkConn(); err != nil {
 		return err
 	}
-	srcPath := d.getSMBPath(srcObj)
-	dstPath := filepath.Join(d.getSMBPath(dstDir), srcObj.GetName())
+	srcPath := srcObj.GetPath()
+	dstPath := filepath.Join(dstDir.GetPath(), srcObj.GetName())
 	var err error
 	if srcObj.IsDir() {
 		err = d.CopyDir(srcPath, dstPath)
@@ -160,7 +155,7 @@ func (d *SMB) Remove(ctx context.Context, obj model.Obj) error {
 		return err
 	}
 	var err error
-	fullPath := d.getSMBPath(obj)
+	fullPath := obj.GetPath()
 	if obj.IsDir() {
 		err = d.fs.RemoveAll(fullPath)
 	} else {
@@ -178,7 +173,7 @@ func (d *SMB) Put(ctx context.Context, dstDir model.Obj, stream model.FileStream
 	if err := d.checkConn(); err != nil {
 		return err
 	}
-	fullPath := filepath.Join(d.getSMBPath(dstDir), stream.GetName())
+	fullPath := filepath.Join(dstDir.GetPath(), stream.GetName())
 	out, err := d.fs.Create(fullPath)
 	if err != nil {
 		d.cleanLastConnTime()

@@ -78,7 +78,7 @@ type Addition struct {
 
 // 登录特征,用于判断是否重新登录
 func (i *Addition) GetIdentity() string {
-	return utils.GetMD5Encode(i.Username + i.Password)
+	return utils.GetMD5EncodeStr(i.Username + i.Password)
 }
 
 var config = driver.Config{
@@ -93,10 +93,10 @@ var configExpert = driver.Config{
 }
 
 func init() {
-	op.RegisterDriver(config, func() driver.Driver {
+	op.RegisterDriver(func() driver.Driver {
 		return &Thunder{}
 	})
-	op.RegisterDriver(configExpert, func() driver.Driver {
+	op.RegisterDriver(func() driver.Driver {
 		return &ThunderExpert{}
 	})
 }

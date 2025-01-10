@@ -24,15 +24,10 @@ func (d *YandexDisk) Config() driver.Config {
 }
 
 func (d *YandexDisk) GetAddition() driver.Additional {
-	return d.Addition
+	return &d.Addition
 }
 
-func (d *YandexDisk) Init(ctx context.Context, storage model.Storage) error {
-	d.Storage = storage
-	err := utils.Json.UnmarshalFromString(d.Storage.Addition, &d.Addition)
-	if err != nil {
-		return err
-	}
+func (d *YandexDisk) Init(ctx context.Context) error {
 	return d.refreshToken()
 }
 
@@ -49,11 +44,6 @@ func (d *YandexDisk) List(ctx context.Context, dir model.Obj, args model.ListArg
 		return fileToObj(src), nil
 	})
 }
-
-//func (d *YandexDisk) Get(ctx context.Context, path string) (model.Obj, error) {
-//	// this is optional
-//	return nil, errs.NotImplement
-//}
 
 func (d *YandexDisk) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	var resp DownResp
@@ -131,10 +121,11 @@ func (d *YandexDisk) Put(ctx context.Context, dstDir model.Obj, stream model.Fil
 	if err != nil {
 		return err
 	}
+	req = req.WithContext(ctx)
 	req.Header.Set("Content-Length", strconv.FormatInt(stream.GetSize(), 10))
 	req.Header.Set("Content-Type", "application/octet-stream")
 	res, err := base.HttpClient.Do(req)
-	res.Body.Close()
+	_ = res.Body.Close()
 	return err
 }
 

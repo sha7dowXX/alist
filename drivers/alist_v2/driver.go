@@ -7,7 +7,6 @@ import (
 	"github.com/alist-org/alist/v3/internal/driver"
 	"github.com/alist-org/alist/v3/internal/errs"
 	"github.com/alist-org/alist/v3/internal/model"
-	"github.com/alist-org/alist/v3/pkg/utils"
 	"github.com/alist-org/alist/v3/server/common"
 )
 
@@ -21,18 +20,16 @@ func (d *AListV2) Config() driver.Config {
 }
 
 func (d *AListV2) GetAddition() driver.Additional {
-	return d.Addition
+	return &d.Addition
 }
 
-func (d *AListV2) Init(ctx context.Context, storage model.Storage) error {
-	d.Storage = storage
-	err := utils.Json.UnmarshalFromString(d.Storage.Addition, &d.Addition)
-	if err != nil {
-		return err
+func (d *AListV2) Init(ctx context.Context) error {
+	if len(d.Addition.Address) > 0 && string(d.Addition.Address[len(d.Addition.Address)-1]) == "/" {
+		d.Addition.Address = d.Addition.Address[0 : len(d.Addition.Address)-1]
 	}
 	// TODO login / refresh token
 	//op.MustSaveDriverStorage(d)
-	return err
+	return nil
 }
 
 func (d *AListV2) Drop(ctx context.Context) error {
@@ -69,11 +66,6 @@ func (d *AListV2) List(ctx context.Context, dir model.Obj, args model.ListArgs) 
 	}
 	return files, nil
 }
-
-//func (d *AList) Get(ctx context.Context, path string) (model.Obj, error) {
-//	// this is optional
-//	return nil, errs.NotImplement
-//}
 
 func (d *AListV2) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	url := d.Address + "/api/public/path"

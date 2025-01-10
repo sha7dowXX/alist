@@ -6,6 +6,7 @@ import (
 	"github.com/alist-org/alist/v3/cmd/flags"
 	"github.com/alist-org/alist/v3/internal/db"
 	"github.com/alist-org/alist/v3/internal/model"
+	"github.com/alist-org/alist/v3/internal/op"
 	"github.com/alist-org/alist/v3/pkg/utils"
 	"github.com/alist-org/alist/v3/pkg/utils/random"
 	"github.com/pkg/errors"
@@ -13,7 +14,7 @@ import (
 )
 
 func initUser() {
-	admin, err := db.GetAdmin()
+	admin, err := op.GetAdmin()
 	adminPassword := random.String(8)
 	envpass := os.Getenv("ALIST_ADMIN_PASSWORD")
 	if flags.Dev {
@@ -23,36 +24,44 @@ func initUser() {
 	}
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			salt := random.String(16)
 			admin = &model.User{
-				Username: "admin",
-				Password: adminPassword,
-				Role:     model.ADMIN,
-				BasePath: "/",
+				Username:   "admin",
+				Salt:       salt,
+				PwdHash:    model.TwoHashPwd(adminPassword, salt),
+				Role:       model.ADMIN,
+				BasePath:   "/",
+				Authn:      "[]",
+				Permission: 0xFF, // 0(can see hidden) - 7(can remove)
 			}
-			if err := db.CreateUser(admin); err != nil {
+			if err := op.CreateUser(admin); err != nil {
 				panic(err)
 			} else {
-				utils.Log.Infof("Successfully created the admin user and the initial password is: %s", admin.Password)
+				utils.Log.Infof("Successfully created the admin user and the initial password is: %s", adminPassword)
 			}
 		} else {
-			panic(err)
+			utils.Log.Fatalf("[init user] Failed to get admin user: %v", err)
 		}
 	}
-	guest, err := db.GetGuest()
+	guest, err := op.GetGuest()
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			salt := random.String(16)
 			guest = &model.User{
 				Username:   "guest",
-				Password:   "guest",
+				PwdHash:    model.TwoHashPwd("guest", salt),
+				Salt:       salt,
 				Role:       model.GUEST,
 				BasePath:   "/",
 				Permission: 0,
+				Disabled:   true,
+				Authn:      "[]",
 			}
 			if err := db.CreateUser(guest); err != nil {
-				panic(err)
+				utils.Log.Fatalf("[init user] Failed to create guest user: %v", err)
 			}
 		} else {
-			panic(err)
+			utils.Log.Fatalf("[init user] Failed to get guest user: %v", err)
 		}
 	}
 }

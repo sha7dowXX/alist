@@ -3,41 +3,52 @@ package utils
 import (
 	"net/url"
 	stdpath "path"
-	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/alist-org/alist/v3/internal/errs"
 )
 
-// StandardizePath convert path like '/' '/root' '/a/b'
-func StandardizePath(path string) string {
-	path = strings.TrimSuffix(path, "/")
-	// abs path
-	if filepath.IsAbs(path) && runtime.GOOS == "windows" {
-		return path
-	}
-	// relative path with prefix '..'
-	if strings.HasPrefix(path, ".") {
-		return path
-	}
+// FixAndCleanPath
+// The upper layer of the root directory is still the root directory.
+// So ".." And "." will be cleared
+// for example
+// 1. ".." or "." => "/"
+// 2. "../..." or "./..." => "/..."
+// 3. "../.x." or "./.x." => "/.x."
+// 4. "x//\\y" = > "/z/x"
+func FixAndCleanPath(path string) string {
+	path = strings.ReplaceAll(path, "\\", "/")
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
+	}
+	return stdpath.Clean(path)
+}
+
+// PathAddSeparatorSuffix Add path '/' suffix
+// for example /root => /root/
+func PathAddSeparatorSuffix(path string) string {
+	if !strings.HasSuffix(path, "/") {
+		path = path + "/"
 	}
 	return path
 }
 
 // PathEqual judge path is equal
 func PathEqual(path1, path2 string) bool {
-	return StandardizePath(path1) == StandardizePath(path2)
+	return FixAndCleanPath(path1) == FixAndCleanPath(path2)
+}
+
+func IsSubPath(path string, subPath string) bool {
+	path, subPath = FixAndCleanPath(path), FixAndCleanPath(subPath)
+	return path == subPath || strings.HasPrefix(subPath, PathAddSeparatorSuffix(path))
 }
 
 func Ext(path string) string {
 	ext := stdpath.Ext(path)
 	if strings.HasPrefix(ext, ".") {
-		return ext[1:]
+		ext = ext[1:]
 	}
-	return ext
+	return strings.ToLower(ext)
 }
 
 func EncodePath(path string, all ...bool) string {
@@ -64,8 +75,22 @@ func EncodePath(path string, all ...bool) string {
 }
 
 func JoinBasePath(basePath, reqPath string) (string, error) {
-	if strings.HasSuffix(reqPath, "..") || strings.Contains(reqPath, "../") {
+	/** relative path:
+	 * 1. ..
+	 * 2. ../
+	 * 3. /..
+	 * 4. /../
+	 * 5. /a/b/..
+	 */
+	if reqPath == ".." ||
+		strings.HasSuffix(reqPath, "/..") ||
+		strings.HasPrefix(reqPath, "../") ||
+		strings.Contains(reqPath, "/../") {
 		return "", errs.RelativePath
 	}
-	return stdpath.Join(basePath, reqPath), nil
+	return stdpath.Join(FixAndCleanPath(basePath), FixAndCleanPath(reqPath)), nil
+}
+
+func GetFullPath(mountPath, path string) string {
+	return stdpath.Join(GetActualMountPath(mountPath), path)
 }

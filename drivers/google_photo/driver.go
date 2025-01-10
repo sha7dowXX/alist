@@ -26,15 +26,10 @@ func (d *GooglePhoto) Config() driver.Config {
 }
 
 func (d *GooglePhoto) GetAddition() driver.Additional {
-	return d.Addition
+	return &d.Addition
 }
 
-func (d *GooglePhoto) Init(ctx context.Context, storage model.Storage) error {
-	d.Storage = storage
-	err := utils.Json.UnmarshalFromString(d.Storage.Addition, &d.Addition)
-	if err != nil {
-		return err
-	}
+func (d *GooglePhoto) Init(ctx context.Context) error {
 	return d.refreshToken()
 }
 
@@ -51,11 +46,6 @@ func (d *GooglePhoto) List(ctx context.Context, dir model.Obj, args model.ListAr
 		return fileToObj(src), nil
 	})
 }
-
-//func (d *GooglePhoto) Get(ctx context.Context, path string) (model.Obj, error) {
-//	// this is optional
-//	return nil, errs.NotImplement
-//}
 
 func (d *GooglePhoto) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	f, err := d.getMedia(file.GetID())
@@ -134,7 +124,7 @@ func (d *GooglePhoto) Put(ctx context.Context, dstDir model.Obj, stream model.Fi
 	}
 
 	resp, err := d.request(postUrl, http.MethodPost, func(req *resty.Request) {
-		req.SetBody(stream.GetReadCloser())
+		req.SetBody(stream).SetContext(ctx)
 	}, nil, postHeaders)
 
 	if err != nil {

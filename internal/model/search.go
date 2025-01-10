@@ -15,12 +15,14 @@ type IndexProgress struct {
 type SearchReq struct {
 	Parent   string `json:"parent"`
 	Keywords string `json:"keywords"`
+	// 0 for all, 1 for dir, 2 for file
+	Scope int `json:"scope"`
 	PageReq
 }
 
 type SearchNode struct {
 	Parent string `json:"parent" gorm:"index"`
-	Name   string `json:"name" gorm:"index"`
+	Name   string `json:"name"`
 	IsDir  bool   `json:"is_dir"`
 	Size   int64  `json:"size"`
 }
@@ -33,4 +35,8 @@ func (p *SearchReq) Validate() error {
 		return fmt.Errorf("per_page can't < 1")
 	}
 	return nil
+}
+
+func (s *SearchNode) Type() string {
+	return "SearchNode"
 }

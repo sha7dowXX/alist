@@ -1,23 +1,27 @@
 package smb
 
 import (
-	"io"
+	"github.com/alist-org/alist/v3/pkg/utils"
 	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
-	"github.com/alist-org/alist/v3/internal/model"
 	"github.com/hirochachacha/go-smb2"
 )
 
 func (d *SMB) updateLastConnTime() {
-	d.lastConnTime = time.Now()
+	atomic.StoreInt64(&d.lastConnTime, time.Now().Unix())
 }
 
 func (d *SMB) cleanLastConnTime() {
-	d.lastConnTime = time.Now().AddDate(0, 0, -1)
+	atomic.StoreInt64(&d.lastConnTime, 0)
+}
+
+func (d *SMB) getLastConnTime() time.Time {
+	return time.Unix(atomic.LoadInt64(&d.lastConnTime), 0)
 }
 
 func (d *SMB) initFS() error {
@@ -44,21 +48,13 @@ func (d *SMB) initFS() error {
 }
 
 func (d *SMB) checkConn() error {
-	if time.Since(d.lastConnTime) < 5*time.Minute {
+	if time.Since(d.getLastConnTime()) < 5*time.Minute {
 		return nil
 	}
 	if d.fs != nil {
 		_ = d.fs.Umount()
 	}
 	return d.initFS()
-}
-
-func (d *SMB) getSMBPath(dir model.Obj) string {
-	fullPath := dir.GetPath()
-	if fullPath[0:1] != "." {
-		fullPath = "." + fullPath
-	}
-	return fullPath
 }
 
 // CopyFile File copies a single file from src to dst
@@ -78,7 +74,7 @@ func (d *SMB) CopyFile(src, dst string) error {
 	}
 	defer dstfd.Close()
 
-	if _, err = io.Copy(dstfd, srcfd); err != nil {
+	if _, err = utils.CopyWithBuffer(dstfd, srcfd); err != nil {
 		return err
 	}
 	if srcinfo, err = d.fs.Stat(src); err != nil {

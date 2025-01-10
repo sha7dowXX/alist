@@ -1,6 +1,9 @@
 package conf
 
-import "regexp"
+import (
+	"net/url"
+	"regexp"
+)
 
 var (
 	BuiltAt    string
@@ -13,9 +16,10 @@ var (
 
 var (
 	Conf *Config
+	URL  *url.URL
 )
 
-var TypesMap = make(map[string][]string)
+var SlicesMap = make(map[string][]string)
 var FilenameCharMap = make(map[string]string)
 var PrivacyReg []*regexp.Regexp
 

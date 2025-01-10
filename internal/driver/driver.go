@@ -9,7 +9,7 @@ import (
 type Driver interface {
 	Meta
 	Reader
-	Writer
+	//Writer
 	//Other
 }
 
@@ -17,11 +17,11 @@ type Meta interface {
 	Config() Config
 	// GetStorage just get raw storage, no need to implement, because model.Storage have implemented
 	GetStorage() *model.Storage
-	// GetAddition Additional can't be modified externally, so needn't return pointer
+	SetStorage(model.Storage)
+	// GetAddition Additional is used for unmarshal of JSON, so need return pointer
 	GetAddition() Additional
 	// Init If already initialized, drop first
-	// need to unmarshal string to addition first
-	Init(ctx context.Context, storage model.Storage) error
+	Init(ctx context.Context) error
 	Drop(ctx context.Context) error
 }
 
@@ -38,23 +38,109 @@ type Reader interface {
 	Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error)
 }
 
+type GetRooter interface {
+	GetRoot(ctx context.Context) (model.Obj, error)
+}
+
 type Getter interface {
+	// Get file by path, the path haven't been joined with root path
 	Get(ctx context.Context, path string) (model.Obj, error)
 }
 
-type Writer interface {
-	// MakeDir make a folder named `dirName` in `parentDir`
+//type Writer interface {
+//	Mkdir
+//	Move
+//	Rename
+//	Copy
+//	Remove
+//	Put
+//}
+
+type Mkdir interface {
 	MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error
-	// Move `srcObject` to `dstDir`
+}
+
+type Move interface {
 	Move(ctx context.Context, srcObj, dstDir model.Obj) error
-	// Rename rename `srcObject` to `newName`
+}
+
+type Rename interface {
 	Rename(ctx context.Context, srcObj model.Obj, newName string) error
-	// Copy `srcObject` to `dstDir`
+}
+
+type Copy interface {
 	Copy(ctx context.Context, srcObj, dstDir model.Obj) error
-	// Remove remove `object`
+}
+
+type Remove interface {
 	Remove(ctx context.Context, obj model.Obj) error
-	// Put upload `stream` to `parentDir`
+}
+
+type Put interface {
 	Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up UpdateProgress) error
 }
 
-type UpdateProgress func(percentage int)
+type PutURL interface {
+	// PutURL directly put a URL into the storage
+	// Applicable to index-based drivers like URL-Tree or drivers that support uploading files as URLs
+	// Called when using SimpleHttp for offline downloading, skipping creating a download task
+	PutURL(ctx context.Context, dstDir model.Obj, name, url string) error
+}
+
+//type WriteResult interface {
+//	MkdirResult
+//	MoveResult
+//	RenameResult
+//	CopyResult
+//	PutResult
+//	Remove
+//}
+
+type MkdirResult interface {
+	MakeDir(ctx context.Context, parentDir model.Obj, dirName string) (model.Obj, error)
+}
+
+type MoveResult interface {
+	Move(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error)
+}
+
+type RenameResult interface {
+	Rename(ctx context.Context, srcObj model.Obj, newName string) (model.Obj, error)
+}
+
+type CopyResult interface {
+	Copy(ctx context.Context, srcObj, dstDir model.Obj) (model.Obj, error)
+}
+
+type PutResult interface {
+	Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up UpdateProgress) (model.Obj, error)
+}
+
+type PutURLResult interface {
+	// PutURL directly put a URL into the storage
+	// Applicable to index-based drivers like URL-Tree or drivers that support uploading files as URLs
+	// Called when using SimpleHttp for offline downloading, skipping creating a download task
+	PutURL(ctx context.Context, dstDir model.Obj, name, url string) (model.Obj, error)
+}
+
+type UpdateProgress func(percentage float64)
+
+type Progress struct {
+	Total int64
+	Done  int64
+	up    UpdateProgress
+}
+
+func (p *Progress) Write(b []byte) (n int, err error) {
+	n = len(b)
+	p.Done += int64(n)
+	p.up(float64(p.Done) / float64(p.Total) * 100)
+	return
+}
+
+func NewProgress(total int64, up UpdateProgress) *Progress {
+	return &Progress{
+		Total: total,
+		up:    up,
+	}
+}

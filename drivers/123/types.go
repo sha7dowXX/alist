@@ -1,24 +1,15 @@
 package _123
 
 import (
+	"github.com/alist-org/alist/v3/pkg/utils"
+	"net/url"
+	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/alist-org/alist/v3/internal/model"
-	"github.com/alist-org/alist/v3/pkg/utils"
 )
-
-//type BaseResp struct {
-//	Code    interface{} `json:"code"`
-//	Message string      `json:"message"`
-//}
-
-type TokenResp struct {
-	//BaseResp
-	Data struct {
-		Token string `json:"token"`
-	} `json:"data"`
-}
 
 type File struct {
 	FileName    string    `json:"FileName"`
@@ -31,6 +22,14 @@ type File struct {
 	DownloadUrl string    `json:"DownloadUrl"`
 }
 
+func (f File) CreateTime() time.Time {
+	return f.UpdateAt
+}
+
+func (f File) GetHash() utils.HashInfo {
+	return utils.HashInfo{}
+}
+
 func (f File) GetPath() string {
 	return ""
 }
@@ -40,7 +39,7 @@ func (f File) GetSize() int64 {
 }
 
 func (f File) GetName() string {
-	return utils.MappingName(f.FileName)
+	return f.FileName
 }
 
 func (f File) ModTime() time.Time {
@@ -55,7 +54,30 @@ func (f File) GetID() string {
 	return strconv.FormatInt(f.FileId, 10)
 }
 
+func (f File) Thumb() string {
+	if f.DownloadUrl == "" {
+		return ""
+	}
+	du, err := url.Parse(f.DownloadUrl)
+	if err != nil {
+		return ""
+	}
+	du.Path = strings.TrimSuffix(du.Path, "_24_24") + "_70_70"
+	query := du.Query()
+	query.Set("w", "70")
+	query.Set("h", "70")
+	if !query.Has("type") {
+		query.Set("type", strings.TrimPrefix(path.Base(f.FileName), "."))
+	}
+	if !query.Has("trade_key") {
+		query.Set("trade_key", "123pan-thumbnail")
+	}
+	du.RawQuery = query.Encode()
+	return du.String()
+}
+
 var _ model.Obj = (*File)(nil)
+var _ model.Thumb = (*File)(nil)
 
 //func (f File) Thumb() string {
 //
@@ -65,8 +87,9 @@ var _ model.Obj = (*File)(nil)
 type Files struct {
 	//BaseResp
 	Data struct {
-		InfoList []File `json:"InfoList"`
 		Next     string `json:"Next"`
+		Total    int    `json:"Total"`
+		InfoList []File `json:"InfoList"`
 	} `json:"data"`
 }
 
@@ -87,5 +110,14 @@ type UploadResp struct {
 		SessionToken    string `json:"SessionToken"`
 		FileId          int64  `json:"FileId"`
 		Reuse           bool   `json:"Reuse"`
+		EndPoint        string `json:"EndPoint"`
+		StorageNode     string `json:"StorageNode"`
+		UploadId        string `json:"UploadId"`
+	} `json:"data"`
+}
+
+type S3PreSignedURLs struct {
+	Data struct {
+		PreSignedUrls map[string]string `json:"presignedUrls"`
 	} `json:"data"`
 }
