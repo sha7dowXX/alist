@@ -1,0 +1,611 @@
+# Instincts generated from https://github.com/sha7dowXX/alist
+# Generated: 2026-05-15T08:48:14.135Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: alist-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/sha7dowXX/alist
+---
+
+# Alist Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: fix, feat, chore, refactor
+
+## Evidence
+
+- 100 commits analyzed
+- Detected conventional commit pattern
+- Examples: chore(ci): format lang file (#2558), fix: async init aria2 to optimize start duration
+
+---
+id: alist-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/sha7dowXX/alist
+---
+
+# Alist Commit Length
+
+## Action
+
+Write moderate-length commit messages (~54 characters)
+
+## Evidence
+
+- Average commit message length: 54 chars
+- Based on 100 commits
+
+---
+id: alist-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/sha7dowXX/alist
+---
+
+# Alist Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: alist-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/sha7dowXX/alist
+---
+
+# Alist Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: alist-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/sha7dowXX/alist
+---
+
+# Alist Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: alist-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/sha7dowXX/alist
+---
+
+# Alist Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
+---
+id: alist-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sha7dowXX/alist
+---
+
+# Alist Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~15x per month
+- Files: **/*.test.*, **/api/**
+
+---
+id: alist-workflow-refactoring
+trigger: "when refactoring code"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sha7dowXX/alist
+---
+
+# Alist Workflow Refactoring
+
+## Action
+
+Follow the refactoring workflow:
+1. Ensure tests pass before refactor
+2. Refactor code structure
+3. Verify tests still pass
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: src/**/*
+
+---
+id: alist-workflow-add-or-update-driver
+trigger: "when doing add or update driver"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sha7dowXX/alist
+---
+
+# Alist Workflow Add Or Update Driver
+
+## Action
+
+Follow the add-or-update-driver workflow:
+1. Create or update driver implementation file (drivers/<driver>/driver.go)
+2. Create or update driver meta file (drivers/<driver>/meta.go)
+3. Create or update types file (drivers/<driver>/types.go)
+4. Create or update utility/helper file (drivers/<driver>/util.go)
+5. Optionally, update drivers/all.go to register the new driver
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: drivers/*/driver.go, drivers/*/meta.go, drivers/*/types.go
+
+---
+id: alist-workflow-search-index-enhancement
+trigger: "when doing search index enhancement"
+confidence: 0.7
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sha7dowXX/alist
+---
+
+# Alist Workflow Search Index Enhancement
+
+## Action
+
+Follow the search-index-enhancement workflow:
+1. Modify or enhance core search logic (internal/search/*.go)
+2. Update or add database search node logic (internal/db/searchnode.go)
+3. Update or add search models (internal/model/search.go)
+4. Update or add index handlers (server/handles/index.go)
+5. Optionally, update settings or constants (internal/conf/const.go, internal/bootstrap/data/setting.go)
+6. Optionally, update server/router.go
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~4x per month
+- Files: internal/search/*.go, internal/db/searchnode.go, internal/model/search.go
+
+---
+id: alist-workflow-dependency-update
+trigger: "when doing dependency update"
+confidence: 0.75
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sha7dowXX/alist
+---
+
+# Alist Workflow Dependency Update
+
+## Action
+
+Follow the dependency-update workflow:
+1. Update go.mod with new dependency versions
+2. Update go.sum to match
+3. Optionally, run go mod tidy
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~5x per month
+- Files: go.mod, go.sum
+
+---
+id: alist-workflow-ci-workflow-update
+trigger: "when doing ci workflow update"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sha7dowXX/alist
+---
+
+# Alist Workflow Ci Workflow Update
+
+## Action
+
+Follow the ci-workflow-update workflow:
+1. Modify workflow YAML files in .github/workflows/
+2. Optionally, update related scripts or configuration files
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: .github/workflows/*.yml
+
+---
+id: alist-workflow-refactor-cross-package
+trigger: "when doing refactor cross package"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/sha7dowXX/alist
+---
+
+# Alist Workflow Refactor Cross Package
+
+## Action
+
+Follow the refactor-cross-package workflow:
+1. Move or split methods between packages (e.g., db → op, fs → op)
+2. Update all references and imports
+3. Rename variables, files, or methods for clarity
+4. Update related tests
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: internal/db/*.go, internal/op/*.go, internal/fs/*.go
+
+---
+id: alist-instinct-file-naming-camelcase
+trigger: "When creating or renaming a file in the codebase"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct File Naming Camelcase
+
+## Action
+
+Use camelCase for file names
+
+## Evidence
+
+- Pattern: namingConventions.files = camelCase
+
+---
+id: alist-instinct-function-naming-camelcase
+trigger: "When defining a new function"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct Function Naming Camelcase
+
+## Action
+
+Name the function using camelCase
+
+## Evidence
+
+- Pattern: namingConventions.functions = camelCase
+
+---
+id: alist-instinct-class-naming-pascalcase
+trigger: "When defining a new struct or class"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct Class Naming Pascalcase
+
+## Action
+
+Name the struct/class using PascalCase
+
+## Evidence
+
+- Pattern: namingConventions.classes = PascalCase
+
+---
+id: alist-instinct-constant-naming-screaming-snake
+trigger: "When declaring a constant"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct Constant Naming Screaming Snake
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names
+
+## Evidence
+
+- Pattern: namingConventions.constants = SCREAMING_SNAKE_CASE
+
+---
+id: alist-instinct-import-style-relative
+trigger: "When importing modules in Go files"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct Import Style Relative
+
+## Action
+
+Use relative import paths
+
+## Evidence
+
+- Pattern: importStyle = relative
+
+---
+id: alist-instinct-export-style-named
+trigger: "When exporting functions, types, or variables"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct Export Style Named
+
+## Action
+
+Use named exports
+
+## Evidence
+
+- Pattern: exportStyle = named
+
+---
+id: alist-instinct-test-location-separate
+trigger: "When adding new tests"
+confidence: 0.7
+domain: testing
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct Test Location Separate
+
+## Action
+
+Place test files in a separate test directory
+
+## Evidence
+
+- Pattern: architecture.folderStructure.testLocation = separate
+
+---
+id: alist-instinct-test-feature-implementation
+trigger: "When implementing a new feature"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct Test Feature Implementation
+
+## Action
+
+Add corresponding tests for the feature
+
+## Evidence
+
+- Workflow: feature-development includes 'Add tests for feature'
+- Files: **/*.test.*
+
+---
+id: alist-instinct-test-before-after-refactor
+trigger: "When refactoring code"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct Test Before After Refactor
+
+## Action
+
+Ensure tests pass before and after refactoring
+
+## Evidence
+
+- Workflow: refactoring includes 'Ensure tests pass before refactor' and 'Verify tests still pass'
+
+---
+id: alist-instinct-git-commit-conventional
+trigger: "When writing a commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct Git Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes like fix, feat, chore, refactor
+
+## Evidence
+
+- Pattern: commits.type = conventional
+- Examples: 'fix: async init aria2 to optimize start duration', 'feat: Search enhancement (#2562)'
+
+---
+id: alist-instinct-git-commit-length
+trigger: "When composing a commit message"
+confidence: 0.7
+domain: git
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct Git Commit Length
+
+## Action
+
+Keep commit message length around 54 characters on average
+
+## Evidence
+
+- Pattern: commits.averageLength = 54
+
+---
+id: alist-instinct-workflow-add-or-update-driver
+trigger: "When adding or updating a storage driver"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct Workflow Add Or Update Driver
+
+## Action
+
+Create or update driver implementation, meta, types, and util files in drivers/, and optionally update drivers/all.go
+
+## Evidence
+
+- Workflow: add-or-update-driver
+- Files: drivers/*/driver.go, drivers/*/meta.go, drivers/*/types.go, drivers/*/util.go, drivers/all.go
+
+---
+id: alist-instinct-workflow-search-index-enhancement
+trigger: "When improving or adding search/indexing features"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct Workflow Search Index Enhancement
+
+## Action
+
+Update internal/search, internal/db/searchnode.go, internal/model/search.go, server/handles/index.go, and optionally settings/constants and server/router.go
+
+## Evidence
+
+- Workflow: search-index-enhancement
+- Files: internal/search/*.go, internal/db/searchnode.go, internal/model/search.go, server/handles/index.go, internal/conf/const.go, internal/bootstrap/data/setting.go, server/router.go
+
+---
+id: alist-instinct-workflow-dependency-update
+trigger: "When updating third-party dependencies"
+confidence: 0.99
+domain: workflow
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct Workflow Dependency Update
+
+## Action
+
+Update go.mod and go.sum, optionally run go mod tidy
+
+## Evidence
+
+- Workflow: dependency-update
+- Files: go.mod, go.sum
+
+---
+id: alist-instinct-workflow-ci-workflow-update
+trigger: "When changing CI/CD automation behavior"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct Workflow Ci Workflow Update
+
+## Action
+
+Modify workflow YAML files in .github/workflows/, optionally update related scripts/configuration
+
+## Evidence
+
+- Workflow: ci-workflow-update
+- Files: .github/workflows/*.yml
+
+---
+id: alist-instinct-workflow-refactor-cross-package
+trigger: "When reorganizing code for better separation or maintainability"
+confidence: 0.85
+domain: workflow
+source: repo-analysis
+source_repo: sha7dowXX/alist
+---
+
+# Alist Instinct Workflow Refactor Cross Package
+
+## Action
+
+Move/split methods between packages, update references/imports, rename for clarity, and update related tests
+
+## Evidence
+
+- Workflow: refactor-cross-package
+- Files: internal/db/*.go, internal/op/*.go, internal/fs/*.go, internal/model/*.go, server/handles/*.go
+
