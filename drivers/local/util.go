@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/alist-org/alist/v3/internal/conf"
 	"github.com/alist-org/alist/v3/internal/model"
@@ -49,7 +51,16 @@ func sanitizeFilePath(path string) (string, error) {
 	if !filepath.IsAbs(cleaned) {
 		return "", fmt.Errorf("file path must be absolute: %s", path)
 	}
-	if strings.ContainsAny(cleaned, ";&|`$<>!\n\r\x00") {
+	// Reject any control character (including NUL, CR, LF and other
+	// non-printable bytes) instead of relying on a fixed blacklist, since a
+	// blacklist can be bypassed via alternative encodings or characters that
+	// were not anticipated.
+	for _, r := range cleaned {
+		if r == utf8.RuneError || unicode.IsControl(r) {
+			return "", fmt.Errorf("file path contains invalid characters: %s", path)
+		}
+	}
+	if strings.ContainsAny(cleaned, ";&|`$<>!") {
 		return "", fmt.Errorf("file path contains invalid characters: %s", path)
 	}
 	info, err := os.Stat(cleaned)
