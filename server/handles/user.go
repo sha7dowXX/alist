@@ -3,8 +3,10 @@ package handles
 import (
 	"strconv"
 
-	"github.com/alist-org/alist/v3/internal/db"
+	"github.com/alist-org/alist/v3/pkg/utils"
+
 	"github.com/alist-org/alist/v3/internal/model"
+	"github.com/alist-org/alist/v3/internal/op"
 	"github.com/alist-org/alist/v3/server/common"
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
@@ -18,7 +20,7 @@ func ListUsers(c *gin.Context) {
 	}
 	req.Validate()
 	log.Debugf("%+v", req)
-	users, total, err := db.GetUsers(req.Page, req.PerPage)
+	users, total, err := op.GetUsers(req.Page, req.PerPage)
 	if err != nil {
 		common.ErrorResp(c, err, 500, true)
 		return
@@ -35,11 +37,17 @@ func CreateUser(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
+	if len(req.Role) == 0 {
+		req.Role = model.Roles{op.GetDefaultRoleID()}
+	}
 	if req.IsAdmin() || req.IsGuest() {
 		common.ErrorStrResp(c, "admin or guest user can not be created", 400, true)
 		return
 	}
-	if err := db.CreateUser(&req); err != nil {
+	req.SetPassword(req.Password)
+	req.Password = ""
+	req.Authn = "[]"
+	if err := op.CreateUser(&req); err != nil {
 		common.ErrorResp(c, err, 500, true)
 	} else {
 		common.SuccessResp(c)
@@ -52,22 +60,53 @@ func UpdateUser(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	user, err := db.GetUserById(req.ID)
+	user, err := op.GetUserById(req.ID)
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
 	}
-	if user.Role != req.Role {
-		common.ErrorStrResp(c, "role can not be changed", 400)
-		return
+
+	if user.Username == "admin" {
+		if !utils.SliceEqual(user.Role, req.Role) {
+			common.ErrorStrResp(c, "cannot change role of admin user", 403)
+			return
+		}
+		//if user.Username != req.Username {
+		//	common.ErrorStrResp(c, "cannot change username of admin user", 403)
+		//	return
+		//}
 	}
+
 	if req.Password == "" {
-		req.Password = user.Password
+		req.PwdHash = user.PwdHash
+		req.Salt = user.Salt
+	} else {
+		req.SetPassword(req.Password)
+		req.Password = ""
 	}
 	if req.OtpSecret == "" {
 		req.OtpSecret = user.OtpSecret
 	}
-	if err := db.UpdateUser(&req); err != nil {
+	if req.Disabled && user.IsAdmin() {
+		count, err := op.CountEnabledAdminsExcluding(user.ID)
+		if err != nil {
+			common.ErrorResp(c, err, 500)
+			return
+		}
+		if count == 0 {
+			common.ErrorStrResp(c, "at least one enabled admin must be kept", 400)
+			return
+		}
+	}
+
+	if !utils.SliceEqual(user.Role, req.Role) {
+		if req.IsAdmin() || req.IsGuest() {
+			common.ErrorStrResp(c, "cannot assign admin or guest role to user", 400, true)
+			return
+		}
+	}
+
+	if err := op.UpdateUser(&req); err != nil {
 		common.ErrorResp(c, err, 500)
 	} else {
 		common.SuccessResp(c)
@@ -81,7 +120,7 @@ func DeleteUser(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	if err := db.DeleteUserById(uint(id)); err != nil {
+	if err := op.DeleteUserById(uint(id)); err != nil {
 		common.ErrorResp(c, err, 500)
 		return
 	}
@@ -95,7 +134,7 @@ func GetUser(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	user, err := db.GetUserById(uint(id))
+	user, err := op.GetUserById(uint(id))
 	if err != nil {
 		common.ErrorResp(c, err, 500, true)
 		return
@@ -110,7 +149,17 @@ func Cancel2FAById(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	if err := db.Cancel2FAById(uint(id)); err != nil {
+	if err := op.Cancel2FAById(uint(id)); err != nil {
+		common.ErrorResp(c, err, 500)
+		return
+	}
+	common.SuccessResp(c)
+}
+
+func DelUserCache(c *gin.Context) {
+	username := c.Query("username")
+	err := op.DelUserCache(username)
+	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
 	}

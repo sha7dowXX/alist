@@ -6,10 +6,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alist-org/alist/v3/internal/db"
+	"github.com/alist-org/alist/v3/internal/conf"
 	"github.com/alist-org/alist/v3/internal/errs"
 	"github.com/alist-org/alist/v3/internal/fs"
 	"github.com/alist-org/alist/v3/internal/model"
+	"github.com/alist-org/alist/v3/internal/op"
+	"github.com/alist-org/alist/v3/internal/setting"
 	"github.com/alist-org/alist/v3/internal/sign"
 	"github.com/alist-org/alist/v3/pkg/utils"
 	"github.com/alist-org/alist/v3/server/common"
@@ -31,22 +33,59 @@ type DirReq struct {
 }
 
 type ObjResp struct {
-	Name     string    `json:"name"`
-	Size     int64     `json:"size"`
-	IsDir    bool      `json:"is_dir"`
-	Modified time.Time `json:"modified"`
-	Sign     string    `json:"sign"`
-	Thumb    string    `json:"thumb"`
-	Type     int       `json:"type"`
+	Id           string                     `json:"id"`
+	Path         string                     `json:"path"`
+	VirtualPath  string                     `json:"virtual_path"`
+	Name         string                     `json:"name"`
+	Size         int64                      `json:"size"`
+	IsDir        bool                       `json:"is_dir"`
+	Modified     time.Time                  `json:"modified"`
+	Created      time.Time                  `json:"created"`
+	Sign         string                     `json:"sign"`
+	Thumb        string                     `json:"thumb"`
+	Type         int                        `json:"type"`
+	HashInfoStr  string                     `json:"hashinfo"`
+	HashInfo     map[*utils.HashType]string `json:"hash_info"`
+	StorageClass string                     `json:"storage_class,omitempty"`
 }
 
 type FsListResp struct {
-	Content  []ObjResp `json:"content"`
-	Total    int64     `json:"total"`
-	Readme   string    `json:"readme"`
-	Write    bool      `json:"write"`
-	Provider string    `json:"provider"`
+	Content       []ObjLabelResp `json:"content"`
+	Total         int64          `json:"total"`
+	FilteredTotal int64          `json:"filtered_total"`
+	Page          int            `json:"page"`
+	PerPage       int            `json:"per_page"`
+	HasMore       bool           `json:"has_more"`
+	PagesTotal    int            `json:"pages_total"`
+	Readme        string         `json:"readme"`
+	Header        string         `json:"header"`
+	Write         bool           `json:"write"`
+	Provider      string         `json:"provider"`
 }
+
+type ObjLabelResp struct {
+	Id           string                     `json:"id"`
+	Path         string                     `json:"path"`
+	VirtualPath  string                     `json:"virtual_path"`
+	Name         string                     `json:"name"`
+	Size         int64                      `json:"size"`
+	IsDir        bool                       `json:"is_dir"`
+	Modified     time.Time                  `json:"modified"`
+	Created      time.Time                  `json:"created"`
+	Sign         string                     `json:"sign"`
+	Thumb        string                     `json:"thumb"`
+	Type         int                        `json:"type"`
+	HashInfoStr  string                     `json:"hashinfo"`
+	HashInfo     map[*utils.HashType]string `json:"hash_info"`
+	LabelList    []model.Label              `json:"label_list"`
+	StorageClass string                     `json:"storage_class,omitempty"`
+}
+
+const (
+	DefaultPerPage = 200
+	MaxPerPage     = 500
+	AllPerPage     = -1
+)
 
 func FsList(c *gin.Context) {
 	var req ListReq
@@ -54,14 +93,16 @@ func FsList(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	req.Validate()
+	effPage, effPerPage := normalizeListPage(req.Page, req.PerPage)
+	req.Page = effPage
+	req.PerPage = effPerPage
 	user := c.MustGet("user").(*model.User)
 	reqPath, err := user.JoinPath(req.Path)
 	if err != nil {
 		common.ErrorResp(c, err, 403)
 		return
 	}
-	meta, err := db.GetNearestMeta(reqPath)
+	meta, err := op.GetNearestMeta(reqPath)
 	if err != nil {
 		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 			common.ErrorResp(c, err, 500, true)
@@ -69,31 +110,49 @@ func FsList(c *gin.Context) {
 		}
 	}
 	c.Set("meta", meta)
-	if !common.CanAccess(user, meta, reqPath, req.Password) {
+	if !common.CanAccessWithRoles(user, meta, reqPath, req.Password) {
 		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
 		return
 	}
-	if !user.CanWrite() && !common.CanWrite(meta, reqPath) && req.Refresh {
+	perm := common.MergeRolePermissions(user, reqPath)
+	if !common.HasPermission(perm, common.PermWrite) && !common.CanWrite(meta, reqPath) && req.Refresh {
 		common.ErrorStrResp(c, "Refresh without permission", 403)
 		return
 	}
-	objs, err := fs.List(c, reqPath, req.Refresh)
+	provider := "unknown"
+	storage, storageErr := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
+	if storageErr == nil {
+		provider = storage.GetStorage().Driver
+	}
+	objs, err := fs.List(c, reqPath, &fs.ListArgs{Refresh: req.Refresh})
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
 	}
-	total, objs := pagination(objs, &req.PageReq)
-	provider := "unknown"
-	storage, err := fs.GetStorage(reqPath)
-	if err == nil {
-		provider = storage.GetStorage().Driver
+	filtered := make([]model.Obj, 0, len(objs))
+	for _, obj := range objs {
+		childPath := stdpath.Join(reqPath, obj.GetName())
+		if common.CanReadPathByRole(user, childPath) {
+			filtered = append(filtered, obj)
+		}
 	}
+	total, pageObjs := pagination(filtered, &req.PageReq)
+	respContent := toObjsResp(pageObjs, reqPath, isEncrypt(meta, reqPath))
+	pagesTotal := calcPagesTotal(total, req.PerPage)
+	hasMore := req.PerPage != AllPerPage && req.Page*req.PerPage < total
+
 	common.SuccessResp(c, FsListResp{
-		Content:  toObjsResp(objs, reqPath, isEncrypt(meta, reqPath)),
-		Total:    int64(total),
-		Readme:   getReadme(meta, reqPath),
-		Write:    user.CanWrite() || common.CanWrite(meta, reqPath),
-		Provider: provider,
+		Content:       respContent,
+		Total:         int64(total),
+		FilteredTotal: int64(total),
+		Page:          req.Page,
+		PerPage:       req.PerPage,
+		HasMore:       hasMore,
+		PagesTotal:    pagesTotal,
+		Readme:        getReadme(meta, reqPath),
+		Header:        getHeader(meta, reqPath),
+		Write:         common.HasPermission(perm, common.PermWrite) || common.CanWrite(meta, reqPath),
+		Provider:      provider,
 	})
 }
 
@@ -118,7 +177,7 @@ func FsDirs(c *gin.Context) {
 		}
 		reqPath = tmp
 	}
-	meta, err := db.GetNearestMeta(reqPath)
+	meta, err := op.GetNearestMeta(reqPath)
 	if err != nil {
 		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 			common.ErrorResp(c, err, 500, true)
@@ -126,16 +185,23 @@ func FsDirs(c *gin.Context) {
 		}
 	}
 	c.Set("meta", meta)
-	if !common.CanAccess(user, meta, reqPath, req.Password) {
+	if !common.CanAccessWithRoles(user, meta, reqPath, req.Password) {
 		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
 		return
 	}
-	objs, err := fs.List(c, reqPath)
+	objs, err := fs.List(c, reqPath, &fs.ListArgs{})
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
 	}
-	dirs := filterDirs(objs)
+	visible := make([]model.Obj, 0, len(objs))
+	for _, obj := range objs {
+		childPath := stdpath.Join(reqPath, obj.GetName())
+		if common.CanReadPathByRole(user, childPath) {
+			visible = append(visible, obj)
+		}
+	}
+	dirs := filterDirs(visible)
 	common.SuccessResp(c, dirs)
 }
 
@@ -164,7 +230,17 @@ func getReadme(meta *model.Meta, path string) string {
 	return ""
 }
 
+func getHeader(meta *model.Meta, path string) string {
+	if meta != nil && (utils.PathEqual(meta.Path, path) || meta.HeaderSub) {
+		return meta.Header
+	}
+	return ""
+}
+
 func isEncrypt(meta *model.Meta, path string) bool {
+	if common.IsStorageSignEnabled(path) {
+		return true
+	}
 	if meta == nil || meta.Password == "" {
 		return false
 	}
@@ -174,9 +250,43 @@ func isEncrypt(meta *model.Meta, path string) bool {
 	return true
 }
 
+func normalizeListPage(page, perPage int) (int, int) {
+	effPage := page
+	if effPage <= 0 {
+		effPage = 1
+	}
+	effPerPage := perPage
+	if effPerPage < 0 {
+		return effPage, AllPerPage
+	}
+	if effPerPage == 0 {
+		effPerPage = DefaultPerPage
+	}
+	if effPerPage > MaxPerPage {
+		effPerPage = MaxPerPage
+	}
+	return effPage, effPerPage
+}
+
+func calcPagesTotal(total, perPage int) int {
+	if perPage == AllPerPage {
+		if total > 0 {
+			return 1
+		}
+		return 0
+	}
+	if total <= 0 || perPage <= 0 {
+		return 0
+	}
+	return (total + perPage - 1) / perPage
+}
+
 func pagination(objs []model.Obj, req *model.PageReq) (int, []model.Obj) {
 	pageIndex, pageSize := req.Page, req.PerPage
 	total := len(objs)
+	if pageSize == AllPerPage {
+		return total, objs
+	}
 	start := (pageIndex - 1) * pageSize
 	if start > total {
 		return total, []model.Obj{}
@@ -188,21 +298,41 @@ func pagination(objs []model.Obj, req *model.PageReq) (int, []model.Obj) {
 	return total, objs[start:end]
 }
 
-func toObjsResp(objs []model.Obj, parent string, encrypt bool) []ObjResp {
-	var resp []ObjResp
+func toObjsResp(objs []model.Obj, parent string, encrypt bool) []ObjLabelResp {
+	var resp []ObjLabelResp
+
+	names := make([]string, 0, len(objs))
 	for _, obj := range objs {
-		thumb := ""
-		if t, ok := obj.(model.Thumb); ok {
-			thumb = t.Thumb()
+		if !obj.IsDir() {
+			names = append(names, obj.GetName())
 		}
-		resp = append(resp, ObjResp{
-			Name:     obj.GetName(),
-			Size:     obj.GetSize(),
-			IsDir:    obj.IsDir(),
-			Modified: obj.ModTime(),
-			Sign:     common.Sign(obj, parent, encrypt),
-			Thumb:    thumb,
-			Type:     utils.GetObjType(obj.GetName(), obj.IsDir()),
+	}
+
+	labelsByName, _ := op.GetLabelsByFileNamesPublic(names)
+
+	for _, obj := range objs {
+		var labels []model.Label
+		if !obj.IsDir() {
+			labels = labelsByName[obj.GetName()]
+		}
+		thumb, _ := model.GetThumb(obj)
+		storageClass, _ := model.GetStorageClass(obj)
+		resp = append(resp, ObjLabelResp{
+			Id:           obj.GetID(),
+			Path:         obj.GetPath(),
+			VirtualPath:  utils.FixAndCleanPath(stdpath.Join(parent, obj.GetName())),
+			Name:         obj.GetName(),
+			Size:         obj.GetSize(),
+			IsDir:        obj.IsDir(),
+			Modified:     obj.ModTime(),
+			Created:      obj.CreateTime(),
+			HashInfoStr:  obj.GetHash().String(),
+			HashInfo:     obj.GetHash().Export(),
+			Sign:         common.Sign(obj, parent, encrypt),
+			Thumb:        thumb,
+			Type:         utils.GetObjType(obj.GetName(), obj.IsDir()),
+			LabelList:    labels,
+			StorageClass: storageClass,
 		})
 	}
 	return resp
@@ -215,10 +345,12 @@ type FsGetReq struct {
 
 type FsGetResp struct {
 	ObjResp
-	RawURL   string    `json:"raw_url"`
-	Readme   string    `json:"readme"`
-	Provider string    `json:"provider"`
-	Related  []ObjResp `json:"related"`
+	RawURL   string         `json:"raw_url"`
+	Readme   string         `json:"readme"`
+	Header   string         `json:"header"`
+	Provider string         `json:"provider"`
+	WebProxy bool           `json:"web_proxy"`
+	Related  []ObjLabelResp `json:"related"`
 }
 
 func FsGet(c *gin.Context) {
@@ -233,7 +365,7 @@ func FsGet(c *gin.Context) {
 		common.ErrorResp(c, err, 403)
 		return
 	}
-	meta, err := db.GetNearestMeta(reqPath)
+	meta, err := op.GetNearestMeta(reqPath)
 	if err != nil {
 		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 			common.ErrorResp(c, err, 500)
@@ -241,46 +373,67 @@ func FsGet(c *gin.Context) {
 		}
 	}
 	c.Set("meta", meta)
-	if !common.CanAccess(user, meta, reqPath, req.Password) {
+	if !common.CanAccessWithRoles(user, meta, reqPath, req.Password) {
 		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
 		return
 	}
-	obj, err := fs.Get(c, reqPath)
+	obj, err := fs.Get(c, reqPath, &fs.GetArgs{})
 	if err != nil {
 		common.ErrorResp(c, err, 500)
 		return
 	}
 	var rawURL string
 
-	storage, err := fs.GetStorage(reqPath)
+	storage, storageErr := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
 	provider := "unknown"
-	if err == nil {
+	if storageErr == nil {
 		provider = storage.Config().Name
 	}
 	if !obj.IsDir() {
-		if err != nil {
-			common.ErrorResp(c, err, 500)
+		if storageErr != nil {
+			common.ErrorResp(c, storageErr, 500)
 			return
 		}
-		if storage.Config().MustProxy() || storage.GetStorage().WebProxy {
+		query := ""
+		if isEncrypt(meta, reqPath) || setting.GetBool(conf.SignAll) {
+			query = "?sign=" + sign.Sign(reqPath)
+		}
+		forceRedirectRawURL := storage.GetStorage().Driver == "BaiduYouth"
+		forcePreviewRawURL := storage.GetStorage().Driver == "Lark" && isLarkCloudDocName(obj.GetName())
+		forceProxyRawURL := storage.GetStorage().Driver == "Quark" && utils.GetFileType(obj.GetName()) == conf.VIDEO
+		if forceRedirectRawURL {
+			// Baidu Youth direct links are minted per request and are not stable enough
+			// to expose as fs/get raw_url. Return the local /d endpoint so the frontend
+			// obtains a fresh link on each download click.
+			rawURL = fmt.Sprintf("%s/d%s%s",
+				common.GetApiUrl(c.Request),
+				utils.EncodePath(reqPath, true),
+				query)
+		} else if !forcePreviewRawURL && (storage.Config().MustProxy() || storage.GetStorage().WebProxy || forceProxyRawURL) {
 			if storage.GetStorage().DownProxyUrl != "" {
-				rawURL = fmt.Sprintf("%s%s?sign=%s",
-					strings.Split(storage.GetStorage().DownProxyUrl, "\n")[0],
-					utils.EncodePath(reqPath, true),
-					sign.Sign(reqPath))
+				rawURL = common.BuildDownProxyURL(
+					storage.GetStorage().DownProxyUrl,
+					reqPath,
+					storage.GetStorage().DownProxySign,
+				)
 			} else {
-				rawURL = fmt.Sprintf("%s/p%s?sign=%s",
+				rawURL = fmt.Sprintf("%s/p%s%s",
 					common.GetApiUrl(c.Request),
 					utils.EncodePath(reqPath, true),
-					sign.Sign(reqPath))
+					query)
 			}
 		} else {
 			// file have raw url
-			if u, ok := obj.(model.URL); ok {
-				rawURL = u.URL()
+			if url, ok := model.GetUrl(obj); ok {
+				rawURL = url
 			} else {
 				// if storage is not proxy, use raw url by fs.Link
-				link, _, err := fs.Link(c, reqPath, model.LinkArgs{IP: c.ClientIP(), Header: c.Request.Header})
+				link, _, err := fs.Link(c, reqPath, model.LinkArgs{
+					IP:       c.ClientIP(),
+					Header:   c.Request.Header,
+					HttpReq:  c.Request,
+					Redirect: true,
+				})
 				if err != nil {
 					common.ErrorResp(c, err, 500)
 					return
@@ -291,23 +444,35 @@ func FsGet(c *gin.Context) {
 	}
 	var related []model.Obj
 	parentPath := stdpath.Dir(reqPath)
-	sameLevelFiles, err := fs.List(c, parentPath)
+	sameLevelFiles, err := fs.List(c, parentPath, &fs.ListArgs{})
 	if err == nil {
 		related = filterRelated(sameLevelFiles, obj)
 	}
-	parentMeta, _ := db.GetNearestMeta(parentPath)
+	parentMeta, _ := op.GetNearestMeta(parentPath)
+	thumb, _ := model.GetThumb(obj)
+	storageClass, _ := model.GetStorageClass(obj)
 	common.SuccessResp(c, FsGetResp{
 		ObjResp: ObjResp{
-			Name:     obj.GetName(),
-			Size:     obj.GetSize(),
-			IsDir:    obj.IsDir(),
-			Modified: obj.ModTime(),
-			Sign:     common.Sign(obj, parentPath, isEncrypt(meta, reqPath)),
-			Type:     utils.GetFileType(obj.GetName()),
+			Id:           obj.GetID(),
+			Path:         obj.GetPath(),
+			VirtualPath:  utils.FixAndCleanPath(reqPath),
+			Name:         obj.GetName(),
+			Size:         obj.GetSize(),
+			IsDir:        obj.IsDir(),
+			Modified:     obj.ModTime(),
+			Created:      obj.CreateTime(),
+			HashInfoStr:  obj.GetHash().String(),
+			HashInfo:     obj.GetHash().Export(),
+			Sign:         common.Sign(obj, parentPath, isEncrypt(meta, reqPath)),
+			Type:         utils.GetFileType(obj.GetName()),
+			Thumb:        thumb,
+			StorageClass: storageClass,
 		},
 		RawURL:   rawURL,
 		Readme:   getReadme(meta, reqPath),
+		Header:   getHeader(meta, reqPath),
 		Provider: provider,
+		WebProxy: storageErr == nil && storage.GetStorage().WebProxy,
 		Related:  toObjsResp(related, parentPath, isEncrypt(parentMeta, parentPath)),
 	})
 }
@@ -324,6 +489,22 @@ func filterRelated(objs []model.Obj, obj model.Obj) []model.Obj {
 		}
 	}
 	return related
+}
+
+func isLarkCloudDocName(name string) bool {
+	for _, suffix := range []string{
+		".lark-doc",
+		".lark-docx",
+		".lark-sheet",
+		".lark-bitable",
+		".lark-mindnote",
+		".lark-slides",
+	} {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 type FsOtherReq struct {
@@ -344,7 +525,7 @@ func FsOther(c *gin.Context) {
 		common.ErrorResp(c, err, 403)
 		return
 	}
-	meta, err := db.GetNearestMeta(req.Path)
+	meta, err := op.GetNearestMeta(req.Path)
 	if err != nil {
 		if !errors.Is(errors.Cause(err), errs.MetaNotFound) {
 			common.ErrorResp(c, err, 500)
@@ -352,7 +533,7 @@ func FsOther(c *gin.Context) {
 		}
 	}
 	c.Set("meta", meta)
-	if !common.CanAccess(user, meta, req.Path, req.Password) {
+	if !common.CanAccessWithRoles(user, meta, req.Path, req.Password) {
 		common.ErrorStrResp(c, "password is incorrect or you have no permission", 403)
 		return
 	}

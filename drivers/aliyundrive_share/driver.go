@@ -2,16 +2,18 @@ package aliyundrive_share
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/Xhofe/rateg"
 	"github.com/alist-org/alist/v3/drivers/base"
 	"github.com/alist-org/alist/v3/internal/driver"
 	"github.com/alist-org/alist/v3/internal/errs"
 	"github.com/alist-org/alist/v3/internal/model"
 	"github.com/alist-org/alist/v3/pkg/cron"
 	"github.com/alist-org/alist/v3/pkg/utils"
+	"github.com/go-resty/resty/v2"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -22,6 +24,9 @@ type AliyundriveShare struct {
 	ShareToken  string
 	DriveId     string
 	cron        *cron.Cron
+
+	limitList func(ctx context.Context, dir model.Obj) ([]model.Obj, error)
+	limitLink func(ctx context.Context, file model.Obj) (*model.Link, error)
 }
 
 func (d *AliyundriveShare) Config() driver.Config {
@@ -29,16 +34,11 @@ func (d *AliyundriveShare) Config() driver.Config {
 }
 
 func (d *AliyundriveShare) GetAddition() driver.Additional {
-	return d.Addition
+	return &d.Addition
 }
 
-func (d *AliyundriveShare) Init(ctx context.Context, storage model.Storage) error {
-	d.Storage = storage
-	err := utils.Json.UnmarshalFromString(d.Storage.Addition, &d.Addition)
-	if err != nil {
-		return err
-	}
-	err = d.refreshToken()
+func (d *AliyundriveShare) Init(ctx context.Context) error {
+	err := d.refreshToken()
 	if err != nil {
 		return err
 	}
@@ -53,6 +53,14 @@ func (d *AliyundriveShare) Init(ctx context.Context, storage model.Storage) erro
 			log.Errorf("%+v", err)
 		}
 	})
+	d.limitList = rateg.LimitFnCtx(d.list, rateg.LimitFnOption{
+		Limit:  4,
+		Bucket: 1,
+	})
+	d.limitLink = rateg.LimitFnCtx(d.link, rateg.LimitFnOption{
+		Limit:  1,
+		Bucket: 1,
+	})
 	return nil
 }
 
@@ -60,10 +68,18 @@ func (d *AliyundriveShare) Drop(ctx context.Context) error {
 	if d.cron != nil {
 		d.cron.Stop()
 	}
+	d.DriveId = ""
 	return nil
 }
 
 func (d *AliyundriveShare) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
+	if d.limitList == nil {
+		return nil, fmt.Errorf("driver not init")
+	}
+	return d.limitList(ctx, dir)
+}
+
+func (d *AliyundriveShare) list(ctx context.Context, dir model.Obj) ([]model.Obj, error) {
 	files, err := d.getFiles(dir.GetID())
 	if err != nil {
 		return nil, err
@@ -73,12 +89,14 @@ func (d *AliyundriveShare) List(ctx context.Context, dir model.Obj, args model.L
 	})
 }
 
-//func (d *AliyundriveShare) Get(ctx context.Context, path string) (model.Obj, error) {
-//	// this is optional
-//	return nil, errs.NotImplement
-//}
-
 func (d *AliyundriveShare) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+	if d.limitLink == nil {
+		return nil, fmt.Errorf("driver not init")
+	}
+	return d.limitLink(ctx, file)
+}
+
+func (d *AliyundriveShare) link(ctx context.Context, file model.Obj) (*model.Link, error) {
 	data := base.Json{
 		"drive_id": d.DriveId,
 		"file_id":  file.GetID(),
@@ -87,70 +105,43 @@ func (d *AliyundriveShare) Link(ctx context.Context, file model.Obj, args model.
 		"share_id":   d.ShareId,
 	}
 	var resp ShareLinkResp
-	var e ErrorResp
-	_, err := base.RestyClient.R().
-		SetError(&e).SetBody(data).SetResult(&resp).
-		SetHeader("content-type", "application/json").
-		SetHeader("Authorization", "Bearer\t"+d.AccessToken).
-		SetHeader("x-share-token", d.ShareToken).
-		Post("https://api.aliyundrive.com/v2/file/get_share_link_download_url")
+	_, err := d.request("https://api.alipan.com/v2/file/get_share_link_download_url", http.MethodPost, func(req *resty.Request) {
+		req.SetHeader(CanaryHeaderKey, CanaryHeaderValue).SetBody(data).SetResult(&resp)
+	})
 	if err != nil {
 		return nil, err
 	}
-	var u string
-	if e.Code != "" {
-		if e.Code == "AccessTokenInvalid" || e.Code == "ShareLinkTokenInvalid" {
-			if e.Code == "AccessTokenInvalid" {
-				err = d.refreshToken()
-			} else {
-				err = d.getShareToken()
-			}
-			if err != nil {
-				return nil, err
-			}
-			return d.Link(ctx, file, args)
-		} else {
-			return nil, errors.New(e.Code + ": " + e.Message)
-		}
-	} else {
-		u = resp.DownloadUrl
-	}
 	return &model.Link{
 		Header: http.Header{
-			"Referer": []string{"https://www.aliyundrive.com/"},
+			"Referer": []string{"https://www.alipan.com/"},
 		},
-		URL: u,
+		URL: resp.DownloadUrl,
 	}, nil
 }
 
-func (d *AliyundriveShare) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
-	// TODO create folder
-	return errs.NotSupport
-}
-
-func (d *AliyundriveShare) Move(ctx context.Context, srcObj, dstDir model.Obj) error {
-	// TODO move obj
-	return errs.NotSupport
-}
-
-func (d *AliyundriveShare) Rename(ctx context.Context, srcObj model.Obj, newName string) error {
-	// TODO rename obj
-	return errs.NotSupport
-}
-
-func (d *AliyundriveShare) Copy(ctx context.Context, srcObj, dstDir model.Obj) error {
-	// TODO copy obj
-	return errs.NotSupport
-}
-
-func (d *AliyundriveShare) Remove(ctx context.Context, obj model.Obj) error {
-	// TODO remove obj
-	return errs.NotSupport
-}
-
-func (d *AliyundriveShare) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
-	// TODO upload file
-	return errs.NotSupport
+func (d *AliyundriveShare) Other(ctx context.Context, args model.OtherArgs) (interface{}, error) {
+	var resp base.Json
+	var url string
+	data := base.Json{
+		"share_id": d.ShareId,
+		"file_id":  args.Obj.GetID(),
+	}
+	switch args.Method {
+	case "doc_preview":
+		url = "https://api.alipan.com/v2/file/get_office_preview_url"
+	case "video_preview":
+		url = "https://api.alipan.com/v2/file/get_video_preview_play_info"
+		data["category"] = "live_transcoding"
+	default:
+		return nil, errs.NotSupport
+	}
+	_, err := d.request(url, http.MethodPost, func(req *resty.Request) {
+		req.SetBody(data).SetResult(&resp)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 var _ driver.Driver = (*AliyundriveShare)(nil)

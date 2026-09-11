@@ -1,11 +1,12 @@
 package data
 
 import (
+	"github.com/alist-org/alist/v3/internal/db"
 	"os"
 
 	"github.com/alist-org/alist/v3/cmd/flags"
-	"github.com/alist-org/alist/v3/internal/db"
 	"github.com/alist-org/alist/v3/internal/model"
+	"github.com/alist-org/alist/v3/internal/op"
 	"github.com/alist-org/alist/v3/pkg/utils"
 	"github.com/alist-org/alist/v3/pkg/utils/random"
 	"github.com/pkg/errors"
@@ -13,7 +14,29 @@ import (
 )
 
 func initUser() {
-	admin, err := db.GetAdmin()
+	guest, err := op.GetGuest()
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			salt := random.String(16)
+			guestRole, _ := op.GetRoleByName("guest")
+			guest = &model.User{
+				Username:   "guest",
+				PwdHash:    model.TwoHashPwd("guest", salt),
+				Salt:       salt,
+				Role:       model.Roles{int(guestRole.ID)},
+				BasePath:   "/",
+				Permission: 0,
+				Disabled:   true,
+				Authn:      "[]",
+			}
+			if err := db.CreateUser(guest); err != nil {
+				utils.Log.Fatalf("[init user] Failed to create guest user: %v", err)
+			}
+		} else {
+			utils.Log.Fatalf("[init user] Failed to get guest user: %v", err)
+		}
+	}
+	admin, err := op.GetAdmin()
 	adminPassword := random.String(8)
 	envpass := os.Getenv("ALIST_ADMIN_PASSWORD")
 	if flags.Dev {
@@ -23,36 +46,25 @@ func initUser() {
 	}
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			salt := random.String(16)
+			adminRole, _ := op.GetRoleByName("admin")
 			admin = &model.User{
 				Username: "admin",
-				Password: adminPassword,
-				Role:     model.ADMIN,
+				Salt:     salt,
+				PwdHash:  model.TwoHashPwd(adminPassword, salt),
+				Role:     model.Roles{int(adminRole.ID)},
 				BasePath: "/",
+				Authn:    "[]",
+				// 0(can see hidden) - 7(can remove) & 12(can read archives) - 13(can decompress archives)
+				Permission: 0xFFFF,
 			}
-			if err := db.CreateUser(admin); err != nil {
+			if err := op.CreateUser(admin); err != nil {
 				panic(err)
 			} else {
-				utils.Log.Infof("Successfully created the admin user and the initial password is: %s", admin.Password)
+				utils.Log.Infof("Successfully created the admin user and the initial password is: %s", adminPassword)
 			}
 		} else {
-			panic(err)
-		}
-	}
-	guest, err := db.GetGuest()
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			guest = &model.User{
-				Username:   "guest",
-				Password:   "guest",
-				Role:       model.GUEST,
-				BasePath:   "/",
-				Permission: 0,
-			}
-			if err := db.CreateUser(guest); err != nil {
-				panic(err)
-			}
-		} else {
-			panic(err)
+			utils.Log.Fatalf("[init user] Failed to get admin user: %v", err)
 		}
 	}
 }

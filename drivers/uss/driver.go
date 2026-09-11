@@ -3,6 +3,7 @@ package uss
 import (
 	"context"
 	"fmt"
+	"github.com/alist-org/alist/v3/internal/stream"
 	"net/url"
 	"path"
 	"strings"
@@ -25,15 +26,10 @@ func (d *USS) Config() driver.Config {
 }
 
 func (d *USS) GetAddition() driver.Additional {
-	return d.Addition
+	return &d.Addition
 }
 
-func (d *USS) Init(ctx context.Context, storage model.Storage) error {
-	d.Storage = storage
-	err := utils.Json.UnmarshalFromString(d.Storage.Addition, &d.Addition)
-	if err != nil {
-		return err
-	}
+func (d *USS) Init(ctx context.Context) error {
 	d.client = upyun.NewUpYun(&upyun.UpYunConfig{
 		Bucket:   d.Bucket,
 		Operator: d.OperatorName,
@@ -50,7 +46,6 @@ func (d *USS) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 	prefix := getKey(dir.GetPath(), true)
 	objsChan := make(chan *upyun.FileInfo, 10)
 	var err error
-	defer close(objsChan)
 	go func() {
 		err = d.client.List(&upyun.GetObjectsConfig{
 			Path:           prefix,
@@ -76,26 +71,22 @@ func (d *USS) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]m
 	return res, err
 }
 
-//func (d *USS) Get(ctx context.Context, path string) (model.Obj, error) {
-//	// this is optional
-//	return nil, errs.NotImplement
-//}
-
 func (d *USS) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	key := getKey(file.GetPath(), false)
-	host := d.CustomHost
-	if host == "" {
-		host = d.Endpoint
-	}
-	if strings.Contains(host, "://") {
+	host := d.Endpoint
+	if !strings.Contains(host, "://") { //判断是否包含协议头，否则https
 		host = "https://" + host
 	}
 	u := fmt.Sprintf("%s/%s", host, key)
 	downExp := time.Hour * time.Duration(d.SignURLExpire)
 	expireAt := time.Now().Add(downExp).Unix()
 	upd := url.QueryEscape(path.Base(file.GetPath()))
-	signStr := strings.Join([]string{d.OperatorPassword, fmt.Sprint(expireAt), fmt.Sprintf("/%s", key)}, "&")
-	upt := utils.GetMD5Encode(signStr)[12:20] + fmt.Sprint(expireAt)
+	tokenOrPassword := d.AntiTheftChainToken
+	if tokenOrPassword == "" {
+		tokenOrPassword = d.OperatorPassword
+	}
+	signStr := strings.Join([]string{tokenOrPassword, fmt.Sprint(expireAt), fmt.Sprintf("/%s", key)}, "&")
+	upt := utils.GetMD5EncodeStr(signStr)[12:20] + fmt.Sprint(expireAt)
 	link := fmt.Sprintf("%s?_upd=%s&_upt=%s", u, upd, upt)
 	return &model.Link{URL: link}, nil
 }
@@ -132,10 +123,13 @@ func (d *USS) Remove(ctx context.Context, obj model.Obj) error {
 	})
 }
 
-func (d *USS) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
+func (d *USS) Put(ctx context.Context, dstDir model.Obj, s model.FileStreamer, up driver.UpdateProgress) error {
 	return d.client.Put(&upyun.PutObjectConfig{
-		Path:   getKey(path.Join(dstDir.GetPath(), stream.GetName()), false),
-		Reader: stream,
+		Path: getKey(path.Join(dstDir.GetPath(), s.GetName()), false),
+		Reader: driver.NewLimitedUploadStream(ctx, &stream.ReaderUpdatingProgress{
+			Reader:         s,
+			UpdateProgress: up,
+		}),
 	})
 }
 

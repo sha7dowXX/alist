@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	_ "github.com/alist-org/alist/v3/drivers"
+	"github.com/alist-org/alist/v3/internal/bootstrap"
 	"github.com/alist-org/alist/v3/internal/bootstrap/data"
 	"github.com/alist-org/alist/v3/internal/conf"
 	"github.com/alist-org/alist/v3/internal/op"
@@ -71,17 +72,26 @@ func writeFile(name string, data interface{}) {
 	} else {
 		log.Infof("%s.json changed, update file", name)
 		//log.Infof("old: %+v\nnew:%+v", oldData, data)
-		utils.WriteJsonToFile(fmt.Sprintf("lang/%s.json", name), data)
+		utils.WriteJsonToFile(fmt.Sprintf("lang/%s.json", name), newData, true)
 	}
 }
 
 func generateDriversJson() {
 	drivers := make(Drivers)
 	drivers["drivers"] = make(KV[interface{}])
+	drivers["config"] = make(KV[interface{}])
 	driverInfoMap := op.GetDriverInfoMap()
 	for k, v := range driverInfoMap {
 		drivers["drivers"][k] = convert(k)
 		items := make(KV[interface{}])
+		config := map[string]string{}
+		if v.Config.Alert != "" {
+			alert := strings.SplitN(v.Config.Alert, "|", 2)
+			if len(alert) > 1 {
+				config["alert"] = alert[1]
+			}
+		}
+		drivers["config"][k] = config
 		for i := range v.Additional {
 			item := v.Additional[i]
 			items[item.Name] = convert(item.Name)
@@ -123,14 +133,15 @@ func generateSettingsJson() {
 	//utils.WriteJsonToFile("lang/settings.json", settingsLang)
 }
 
-// langCmd represents the lang command
-var langCmd = &cobra.Command{
+// LangCmd represents the lang command
+var LangCmd = &cobra.Command{
 	Use:   "lang",
 	Short: "Generate language json file",
 	Run: func(cmd *cobra.Command, args []string) {
+		bootstrap.InitConfig()
 		err := os.MkdirAll("lang", 0777)
 		if err != nil {
-			utils.Log.Fatal("failed create folder: %s", err.Error())
+			utils.Log.Fatalf("failed create folder: %s", err.Error())
 		}
 		generateDriversJson()
 		generateSettingsJson()
@@ -138,7 +149,7 @@ var langCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(langCmd)
+	RootCmd.AddCommand(LangCmd)
 
 	// Here you will define your flags and configuration settings.
 

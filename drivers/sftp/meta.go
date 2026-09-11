@@ -10,7 +10,9 @@ type Addition struct {
 	Username   string `json:"username" required:"true"`
 	PrivateKey string `json:"private_key" type:"text"`
 	Password   string `json:"password"`
+	Passphrase string `json:"passphrase"`
 	driver.RootPath
+	IgnoreSymlinkError bool `json:"ignore_symlink_error" default:"false" info:"Ignore symlink error"`
 }
 
 var config = driver.Config{
@@ -21,10 +23,8 @@ var config = driver.Config{
 	CheckStatus: true,
 }
 
-func New() driver.Driver {
-	return &SFTP{}
-}
-
 func init() {
-	op.RegisterDriver(config, New)
+	op.RegisterDriver(func() driver.Driver {
+		return &SFTP{}
+	})
 }

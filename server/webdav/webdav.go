@@ -6,6 +6,7 @@
 package webdav // import "golang.org/x/net/webdav"
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -15,10 +16,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alist-org/alist/v3/internal/stream"
+
 	"github.com/alist-org/alist/v3/internal/errs"
 	"github.com/alist-org/alist/v3/internal/fs"
 	"github.com/alist-org/alist/v3/internal/model"
-	"github.com/alist-org/alist/v3/internal/sign"
 	"github.com/alist-org/alist/v3/pkg/utils"
 	"github.com/alist-org/alist/v3/server/common"
 )
@@ -55,7 +57,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			status, err = h.handleOptions(brw, r)
 		case "GET", "HEAD", "POST":
 			useBufferedWriter = false
-			status, err = h.handleGetHeadPost(w, r)
+			Writer := &common.WrittenResponseWriter{ResponseWriter: w}
+			status, err = h.handleGetHeadPost(Writer, r)
+			if status != 0 && Writer.IsWritten() {
+				status = 0
+			}
 		case "DELETE":
 			status, err = h.handleDelete(brw, r)
 		case "PUT":
@@ -70,6 +76,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			status, err = h.handleUnlock(brw, r)
 		case "PROPFIND":
 			status, err = h.handlePropfind(brw, r)
+			// if there is a error for PROPFIND, we should be as an empty folder to the client
+			if err != nil {
+				status = http.StatusNotFound
+			}
 		case "PROPPATCH":
 			status, err = h.handleProppatch(brw, r)
 		}
@@ -183,12 +193,12 @@ func (h *Handler) handleOptions(w http.ResponseWriter, r *http.Request) (status 
 	}
 	ctx := r.Context()
 	user := ctx.Value("user").(*model.User)
-	reqPath, err = user.JoinPath(reqPath)
+	reqPath, err = ResolvePath(user, reqPath)
 	if err != nil {
 		return 403, err
 	}
 	allow := "OPTIONS, LOCK, PUT, MKCOL"
-	if fi, err := fs.Get(ctx, reqPath); err == nil {
+	if fi, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err == nil {
 		if fi.IsDir() {
 			allow = "OPTIONS, LOCK, DELETE, PROPPATCH, COPY, MOVE, UNLOCK, PROPFIND"
 		} else {
@@ -211,43 +221,42 @@ func (h *Handler) handleGetHeadPost(w http.ResponseWriter, r *http.Request) (sta
 	// TODO: check locks for read-only access??
 	ctx := r.Context()
 	user := ctx.Value("user").(*model.User)
-	reqPath, err = user.JoinPath(reqPath)
+	reqPath, err = ResolvePath(user, reqPath)
 	if err != nil {
-		return 403, err
+		return http.StatusForbidden, err
 	}
-	fi, err := fs.Get(ctx, reqPath)
+	fi, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
 	if err != nil {
 		return http.StatusNotFound, err
+	}
+	if r.Method == http.MethodHead {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", fi.GetSize()))
+		return http.StatusOK, nil
 	}
 	if fi.IsDir() {
 		return http.StatusMethodNotAllowed, nil
 	}
-	etag, err := findETag(ctx, h.LockSystem, reqPath, fi)
-	if err != nil {
-		return http.StatusInternalServerError, err
-	}
-	w.Header().Set("ETag", etag)
 	// Let ServeContent determine the Content-Type header.
-	storage, _ := fs.GetStorage(reqPath)
+	storage, _ := fs.GetStorage(reqPath, &fs.GetStoragesArgs{})
 	downProxyUrl := storage.GetStorage().DownProxyUrl
 	if storage.GetStorage().WebdavNative() || (storage.GetStorage().WebdavProxy() && downProxyUrl == "") {
-		link, _, err := fs.Link(ctx, reqPath, model.LinkArgs{Header: r.Header})
+		link, _, err := fs.Link(ctx, reqPath, model.LinkArgs{Header: r.Header, HttpReq: r})
 		if err != nil {
 			return http.StatusInternalServerError, err
+		}
+		if storage.GetStorage().ProxyRange {
+			common.ProxyRange(link, fi.GetSize())
 		}
 		err = common.Proxy(w, r, link, fi)
 		if err != nil {
-			return http.StatusInternalServerError, err
+			return http.StatusInternalServerError, fmt.Errorf("webdav proxy error: %+v", err)
 		}
 	} else if storage.GetStorage().WebdavProxy() && downProxyUrl != "" {
-		u := fmt.Sprintf("%s%s?sign=%s",
-			strings.Split(downProxyUrl, "\n")[0],
-			utils.EncodePath(reqPath, true),
-			sign.Sign(reqPath))
+		u := common.BuildDownProxyURL(downProxyUrl, reqPath, storage.GetStorage().DownProxySign)
 		w.Header().Set("Cache-Control", "max-age=0, no-cache, no-store, must-revalidate")
 		http.Redirect(w, r, u, http.StatusFound)
 	} else {
-		link, _, err := fs.Link(ctx, reqPath, model.LinkArgs{IP: utils.ClientIP(r)})
+		link, _, err := fs.Link(ctx, reqPath, model.LinkArgs{IP: utils.ClientIP(r), Header: r.Header, HttpReq: r, Redirect: true})
 		if err != nil {
 			return http.StatusInternalServerError, err
 		}
@@ -269,7 +278,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 
 	ctx := r.Context()
 	user := ctx.Value("user").(*model.User)
-	reqPath, err = user.JoinPath(reqPath)
+	reqPath, err = ResolvePath(user, reqPath)
 	if err != nil {
 		return 403, err
 	}
@@ -278,7 +287,7 @@ func (h *Handler) handleDelete(w http.ResponseWriter, r *http.Request) (status i
 	// "godoc os RemoveAll" says that "If the path does not exist, RemoveAll
 	// returns nil (no error)." WebDAV semantics are that it should return a
 	// "404 Not Found". We therefore have to Stat before we RemoveAll.
-	if _, err := fs.Get(ctx, reqPath); err != nil {
+	if _, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err != nil {
 		if errs.IsObjectNotFound(err) {
 			return http.StatusNotFound, err
 		}
@@ -296,6 +305,9 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 	if err != nil {
 		return status, err
 	}
+	if reqPath == "" {
+		return http.StatusMethodNotAllowed, nil
+	}
 	release, status, err := h.confirmLocks(r, reqPath, "")
 	if err != nil {
 		return status, err
@@ -305,30 +317,36 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 	// comments in http.checkEtag.
 	ctx := r.Context()
 	user := ctx.Value("user").(*model.User)
-	reqPath, err = user.JoinPath(reqPath)
+	reqPath, err = ResolvePath(user, reqPath)
 	if err != nil {
-		return 403, err
+		return http.StatusForbidden, err
 	}
 	obj := model.Object{
 		Name:     path.Base(reqPath),
 		Size:     r.ContentLength,
-		Modified: time.Now(),
+		Modified: h.getModTime(r),
+		Ctime:    h.getCreateTime(r),
 	}
-	stream := &model.FileStream{
-		Obj:        &obj,
-		ReadCloser: r.Body,
-		Mimetype:   r.Header.Get("Content-Type"),
+	fsStream := &stream.FileStream{
+		Obj:      &obj,
+		Reader:   r.Body,
+		Mimetype: r.Header.Get("Content-Type"),
 	}
-	if stream.Mimetype == "" {
-		stream.Mimetype = utils.GetMimeType(reqPath)
+	if fsStream.Mimetype == "" {
+		fsStream.Mimetype = utils.GetMimeType(reqPath)
 	}
-	err = fs.PutDirectly(ctx, path.Dir(reqPath), stream)
+	err = fs.PutDirectly(ctx, path.Dir(reqPath), fsStream)
+	if errs.IsNotFoundError(err) {
+		return http.StatusNotFound, err
+	}
 
+	_ = r.Body.Close()
+	_ = fsStream.Close()
 	// TODO(rost): Returning 405 Method Not Allowed might not be appropriate.
 	if err != nil {
 		return http.StatusMethodNotAllowed, err
 	}
-	fi, err := fs.Get(ctx, reqPath)
+	fi, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
 	if err != nil {
 		fi = &obj
 	}
@@ -336,8 +354,7 @@ func (h *Handler) handlePut(w http.ResponseWriter, r *http.Request) (status int,
 	if err != nil {
 		return http.StatusInternalServerError, err
 	}
-	w.Header().Set("ETag", etag)
-	fs.ClearCache(path.Dir(reqPath))
+	w.Header().Set("Etag", etag)
 	return http.StatusCreated, nil
 }
 
@@ -354,7 +371,7 @@ func (h *Handler) handleMkcol(w http.ResponseWriter, r *http.Request) (status in
 
 	ctx := r.Context()
 	user := ctx.Value("user").(*model.User)
-	reqPath, err = user.JoinPath(reqPath)
+	reqPath, err = ResolvePath(user, reqPath)
 	if err != nil {
 		return 403, err
 	}
@@ -362,13 +379,27 @@ func (h *Handler) handleMkcol(w http.ResponseWriter, r *http.Request) (status in
 	if r.ContentLength > 0 {
 		return http.StatusUnsupportedMediaType, nil
 	}
+
+	// RFC 4918 9.3.1
+	//405 (Method Not Allowed) - MKCOL can only be executed on an unmapped URL
+	if _, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err == nil {
+		return http.StatusMethodNotAllowed, err
+	}
+	// RFC 4918 9.3.1
+	// 409 (Conflict) The server MUST NOT create those intermediate collections automatically.
+	reqDir := path.Dir(reqPath)
+	if _, err := fs.Get(ctx, reqDir, &fs.GetArgs{}); err != nil {
+		if errs.IsObjectNotFound(err) {
+			return http.StatusConflict, err
+		}
+		return http.StatusMethodNotAllowed, err
+	}
 	if err := fs.MakeDir(ctx, reqPath); err != nil {
 		if os.IsNotExist(err) {
 			return http.StatusConflict, err
 		}
 		return http.StatusMethodNotAllowed, err
 	}
-	fs.ClearCache(path.Dir(reqPath))
 	return http.StatusCreated, nil
 }
 
@@ -404,11 +435,11 @@ func (h *Handler) handleCopyMove(w http.ResponseWriter, r *http.Request) (status
 
 	ctx := r.Context()
 	user := ctx.Value("user").(*model.User)
-	src, err = user.JoinPath(src)
+	src, err = ResolvePath(user, src)
 	if err != nil {
 		return 403, err
 	}
-	dst, err = user.JoinPath(dst)
+	dst, err = ResolvePath(user, dst)
 	if err != nil {
 		return 403, err
 	}
@@ -502,12 +533,12 @@ func (h *Handler) handleLock(w http.ResponseWriter, r *http.Request) (retStatus 
 			}
 		}
 		reqPath, status, err := h.stripPrefix(r.URL.Path)
-		reqPath, err = user.JoinPath(reqPath)
-		if err != nil {
-			return 403, err
-		}
 		if err != nil {
 			return status, err
+		}
+		reqPath, err = ResolvePath(user, reqPath)
+		if err != nil {
+			return 403, err
 		}
 		ld = LockDetails{
 			Root:      reqPath,
@@ -585,14 +616,16 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 		return status, err
 	}
 	ctx := r.Context()
+	userAgent := r.Header.Get("User-Agent")
+	ctx = context.WithValue(ctx, "userAgent", userAgent)
 	user := ctx.Value("user").(*model.User)
-	reqPath, err = user.JoinPath(reqPath)
+	reqPath, err = ResolvePath(user, reqPath)
 	if err != nil {
 		return 403, err
 	}
-	fi, err := fs.Get(ctx, reqPath)
+	fi, err := fs.Get(ctx, reqPath, &fs.GetArgs{})
 	if err != nil {
-		if errs.IsObjectNotFound(err) {
+		if errs.IsNotFoundError(err) {
 			return http.StatusNotFound, err
 		}
 		return http.StatusMethodNotAllowed, err
@@ -610,6 +643,98 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 	}
 
 	mw := multistatusWriter{w: w}
+
+	if utils.PathEqual(reqPath, user.BasePath) {
+		hasRootPerm := false
+		for _, role := range user.RolesDetail {
+			for _, entry := range role.PermissionScopes {
+				if utils.PathEqual(entry.Path, user.BasePath) {
+					hasRootPerm = true
+					break
+				}
+			}
+			if hasRootPerm {
+				break
+			}
+		}
+		if !hasRootPerm {
+			basePaths := model.GetAllBasePathsFromRoles(user)
+			type infoItem struct {
+				path string
+				info model.Obj
+			}
+			infos := []infoItem{{reqPath, fi}}
+			seen := make(map[string]struct{})
+			for _, p := range basePaths {
+				if !utils.IsSubPath(user.BasePath, p) {
+					continue
+				}
+				rel := strings.TrimPrefix(
+					strings.TrimPrefix(
+						utils.FixAndCleanPath(p),
+						utils.FixAndCleanPath(user.BasePath),
+					),
+					"/",
+				)
+				dir := strings.Split(rel, "/")[0]
+				if dir == "" {
+					continue
+				}
+				if _, ok := seen[dir]; ok {
+					continue
+				}
+				seen[dir] = struct{}{}
+				sp := utils.FixAndCleanPath(path.Join(user.BasePath, dir))
+				info, err := fs.Get(ctx, sp, &fs.GetArgs{})
+				if err != nil {
+					continue
+				}
+				infos = append(infos, infoItem{sp, info})
+			}
+			for _, item := range infos {
+				var pstats []Propstat
+				if pf.Propname != nil {
+					pnames, err := propnames(ctx, h.LockSystem, item.info)
+					if err != nil {
+						return http.StatusInternalServerError, err
+					}
+					pstat := Propstat{Status: http.StatusOK}
+					for _, xmlname := range pnames {
+						pstat.Props = append(pstat.Props, Property{XMLName: xmlname})
+					}
+					pstats = append(pstats, pstat)
+				} else if pf.Allprop != nil {
+					pstats, err = allprop(ctx, h.LockSystem, item.info, pf.Prop)
+					if err != nil {
+						return http.StatusInternalServerError, err
+					}
+				} else {
+					pstats, err = props(ctx, h.LockSystem, item.info, pf.Prop)
+					if err != nil {
+						return http.StatusInternalServerError, err
+					}
+				}
+				rel := strings.TrimPrefix(
+					strings.TrimPrefix(
+						utils.FixAndCleanPath(item.path),
+						utils.FixAndCleanPath(user.BasePath),
+					),
+					"/",
+				)
+				href := utils.EncodePath(path.Join("/", h.Prefix, rel), true)
+				if href != "/" && item.info.IsDir() {
+					href += "/"
+				}
+				if err := mw.write(makePropstatResponse(href, pstats)); err != nil {
+					return http.StatusInternalServerError, err
+				}
+			}
+			if err := mw.close(); err != nil {
+				return http.StatusInternalServerError, err
+			}
+			return 0, nil
+		}
+	}
 
 	walkFn := func(reqPath string, info model.Obj, err error) error {
 		if err != nil {
@@ -634,7 +759,14 @@ func (h *Handler) handlePropfind(w http.ResponseWriter, r *http.Request) (status
 		if err != nil {
 			return err
 		}
-		href := path.Join(h.Prefix, strings.TrimPrefix(reqPath, user.BasePath))
+		rel := strings.TrimPrefix(
+			strings.TrimPrefix(
+				utils.FixAndCleanPath(reqPath),
+				utils.FixAndCleanPath(user.BasePath),
+			),
+			"/",
+		)
+		href := utils.EncodePath(path.Join("/", h.Prefix, rel), true)
 		if href != "/" && info.IsDir() {
 			href += "/"
 		}
@@ -665,11 +797,11 @@ func (h *Handler) handleProppatch(w http.ResponseWriter, r *http.Request) (statu
 
 	ctx := r.Context()
 	user := ctx.Value("user").(*model.User)
-	reqPath, err = user.JoinPath(reqPath)
+	reqPath, err = ResolvePath(user, reqPath)
 	if err != nil {
 		return 403, err
 	}
-	if _, err := fs.Get(ctx, reqPath); err != nil {
+	if _, err := fs.Get(ctx, reqPath, &fs.GetArgs{}); err != nil {
 		if errs.IsObjectNotFound(err) {
 			return http.StatusNotFound, err
 		}
@@ -697,7 +829,7 @@ func (h *Handler) handleProppatch(w http.ResponseWriter, r *http.Request) (statu
 
 func makePropstatResponse(href string, pstats []Propstat) *response {
 	resp := response{
-		Href:     []string{(&url.URL{Path: href}).EscapedPath()},
+		Href:     []string{href},
 		Propstat: make([]propstat, 0, len(pstats)),
 	}
 	for _, p := range pstats {

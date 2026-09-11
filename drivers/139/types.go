@@ -1,5 +1,16 @@
 package _139
 
+import (
+	"encoding/xml"
+)
+
+const (
+	MetaPersonal    string = "personal"
+	MetaFamily      string = "family"
+	MetaGroup       string = "group"
+	MetaPersonalNew string = "personal_new"
+)
+
 type BaseResp struct {
 	Success bool   `json:"success"`
 	Code    string `json:"code"`
@@ -10,7 +21,7 @@ type Catalog struct {
 	CatalogID   string `json:"catalogID"`
 	CatalogName string `json:"catalogName"`
 	//CatalogType     int         `json:"catalogType"`
-	//CreateTime      string      `json:"createTime"`
+	CreateTime string `json:"createTime"`
 	UpdateTime string `json:"updateTime"`
 	//IsShared        bool        `json:"isShared"`
 	//CatalogLevel    int         `json:"catalogLevel"`
@@ -44,10 +55,11 @@ type Content struct {
 	//ContentDesc     string      `json:"contentDesc"`
 	//ContentType     int         `json:"contentType"`
 	//ContentOrigin   int         `json:"contentOrigin"`
+	CreateTime string `json:"createTime"`
 	UpdateTime string `json:"updateTime"`
 	//CommentCount    int         `json:"commentCount"`
-	ThumbnailURL string `json:"thumbnailURL"`
-	//BigthumbnailURL string      `json:"bigthumbnailURL"`
+	ThumbnailURL    string `json:"thumbnailURL"`
+	BigthumbnailURL string `json:"bigthumbnailURL"`
 	//PresentURL      string      `json:"presentURL"`
 	//PresentLURL     string      `json:"presentLURL"`
 	//PresentHURL     string      `json:"presentHURL"`
@@ -63,7 +75,7 @@ type Content struct {
 	//ParentCatalogID string      `json:"parentCatalogId"`
 	//Channel         string      `json:"channel"`
 	//GeoLocFlag      string      `json:"geoLocFlag"`
-	//Digest          string      `json:"digest"`
+	Digest string `json:"digest"`
 	//Version         string      `json:"version"`
 	//FileEtag        string      `json:"fileEtag"`
 	//FileVersion     string      `json:"fileVersion"`
@@ -131,6 +143,13 @@ type UploadResp struct {
 	} `json:"data"`
 }
 
+type InterLayerUploadResult struct {
+	XMLName    xml.Name `xml:"result"`
+	Text       string   `xml:",chardata"`
+	ResultCode int      `xml:"resultCode"`
+	Msg        string   `xml:"msg"`
+}
+
 type CloudContent struct {
 	ContentID string `json:"contentID"`
 	//Modifier         string      `json:"modifier"`
@@ -141,12 +160,12 @@ type CloudContent struct {
 	//ContentSuffix    string      `json:"contentSuffix"`
 	ContentSize int64 `json:"contentSize"`
 	//ContentDesc      string      `json:"contentDesc"`
-	//CreateTime       string      `json:"createTime"`
+	CreateTime string `json:"createTime"`
 	//Shottime         interface{} `json:"shottime"`
-	LastUpdateTime string `json:"lastUpdateTime"`
-	ThumbnailURL   string `json:"thumbnailURL"`
+	LastUpdateTime  string `json:"lastUpdateTime"`
+	ThumbnailURL    string `json:"thumbnailURL"`
+	BigthumbnailURL string `json:"bigthumbnailURL"`
 	//MidthumbnailURL  string      `json:"midthumbnailURL"`
-	//BigthumbnailURL  string      `json:"bigthumbnailURL"`
 	//PresentURL       string      `json:"presentURL"`
 	//PresentLURL      string      `json:"presentLURL"`
 	//PresentHURL      string      `json:"presentHURL"`
@@ -165,7 +184,7 @@ type CloudCatalog struct {
 	CatalogID   string `json:"catalogID"`
 	CatalogName string `json:"catalogName"`
 	//CloudID         string `json:"cloudID"`
-	//CreateTime      string `json:"createTime"`
+	CreateTime     string `json:"createTime"`
 	LastUpdateTime string `json:"lastUpdateTime"`
 	//Creator         string `json:"creator"`
 	//CreatorNickname string `json:"creatorNickname"`
@@ -183,5 +202,151 @@ type QueryContentListResp struct {
 		CloudCatalogList []CloudCatalog `json:"cloudCatalogList"`
 		TotalCount       int            `json:"totalCount"`
 		RecallContent    interface{}    `json:"recallContent"`
+	} `json:"data"`
+}
+
+type QueryGroupContentListResp struct {
+	BaseResp
+	Data struct {
+		Result struct {
+			ResultCode string `json:"resultCode"`
+			ResultDesc string `json:"resultDesc"`
+		} `json:"result"`
+		GetGroupContentResult struct {
+			ParentCatalogID string `json:"parentCatalogID"` // 根目录是"0"
+			CatalogList     []struct {
+				Catalog
+				Path string `json:"path"`
+			} `json:"catalogList"`
+			ContentList []Content `json:"contentList"`
+			NodeCount   int       `json:"nodeCount"` // 文件+文件夹数量
+			CtlgCnt     int       `json:"ctlgCnt"`   // 文件夹数量
+			ContCnt     int       `json:"contCnt"`   // 文件数量
+		} `json:"getGroupContentResult"`
+	} `json:"data"`
+}
+
+type ParallelHashCtx struct {
+	PartOffset int64 `json:"partOffset"`
+}
+
+type PartInfo struct {
+	PartNumber      int64           `json:"partNumber"`
+	PartSize        int64           `json:"partSize"`
+	ParallelHashCtx ParallelHashCtx `json:"parallelHashCtx"`
+}
+
+type PersonalThumbnail struct {
+	Style string `json:"style"`
+	Url   string `json:"url"`
+}
+
+type PersonalFileItem struct {
+	FileId     string              `json:"fileId"`
+	Name       string              `json:"name"`
+	Size       int64               `json:"size"`
+	Type       string              `json:"type"`
+	CreatedAt  string              `json:"createdAt"`
+	UpdatedAt  string              `json:"updatedAt"`
+	Thumbnails []PersonalThumbnail `json:"thumbnailUrls"`
+}
+
+type PersonalListResp struct {
+	BaseResp
+	Data struct {
+		Items          []PersonalFileItem `json:"items"`
+		NextPageCursor string             `json:"nextPageCursor"`
+	}
+}
+
+type PersonalPartInfo struct {
+	PartNumber int    `json:"partNumber"`
+	UploadUrl  string `json:"uploadUrl"`
+}
+
+type PersonalUploadResp struct {
+	BaseResp
+	Data struct {
+		FileId      string             `json:"fileId"`
+		FileName    string             `json:"fileName"`
+		PartInfos   []PersonalPartInfo `json:"partInfos"`
+		Exist       bool               `json:"exist"`
+		RapidUpload bool               `json:"rapidUpload"`
+		UploadId    string             `json:"uploadId"`
+	}
+}
+
+type PersonalUploadUrlResp struct {
+	BaseResp
+	Data struct {
+		FileId    string             `json:"fileId"`
+		UploadId  string             `json:"uploadId"`
+		PartInfos []PersonalPartInfo `json:"partInfos"`
+	}
+}
+
+type QueryRoutePolicyResp struct {
+	Success bool   `json:"success"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		RoutePolicyList []struct {
+			SiteID      string `json:"siteID"`
+			SiteCode    string `json:"siteCode"`
+			ModName     string `json:"modName"`
+			HttpUrl     string `json:"httpUrl"`
+			HttpsUrl    string `json:"httpsUrl"`
+			EnvID       string `json:"envID"`
+			ExtInfo     string `json:"extInfo"`
+			HashName    string `json:"hashName"`
+			ModAddrType int    `json:"modAddrType"`
+		} `json:"routePolicyList"`
+	} `json:"data"`
+}
+
+type RefreshTokenResp struct {
+	XMLName     xml.Name `xml:"root"`
+	Return      string   `xml:"return"`
+	Token       string   `xml:"token"`
+	Expiretime  int32    `xml:"expiretime"`
+	AccessToken string   `xml:"accessToken"`
+	Desc        string   `xml:"desc"`
+}
+
+type ShareCatalog struct {
+	CaID   string `json:"caID"`
+	CaName string `json:"caName"`
+	UdTime string `json:"udTime"`
+}
+
+type ShareContent struct {
+	CoID     string `json:"coID"`
+	CoName   string `json:"coName"`
+	CoSize   int64  `json:"coSize"`
+	CoType   int    `json:"coType"`
+	UdTime   string `json:"udTime"`
+	CoSuffix string `json:"coSuffix"`
+}
+
+type ShareListResp struct {
+	Data struct {
+		CaLst []ShareCatalog `json:"caLst"`
+		CoLst []ShareContent `json:"coLst"`
+	} `json:"data"`
+}
+
+type ShareLinkResp struct {
+	DownloadURL string `json:"downloadURL"`
+}
+type ShareContentInfo struct {
+	ContentName  string `json:"contentName"`
+	ContentSize  int64  `json:"contentSize"`
+	PresentURL   string `json:"presentURL"`   // HLS 播放地址
+	DownloadURL  string `json:"cdnDownLoadUrl"` // 真正的下载直链
+}
+
+type ShareContentInfoResp struct {
+	Data struct {
+		ContentInfo ShareContentInfo `json:"contentInfo"`
 	} `json:"data"`
 }

@@ -1,10 +1,17 @@
 package baidu_netdisk
 
 import (
+	"errors"
+	"path"
 	"strconv"
 	"time"
 
 	"github.com/alist-org/alist/v3/internal/model"
+	"github.com/alist-org/alist/v3/pkg/utils"
+)
+
+var (
+	ErrBaiduEmptyFilesNotAllowed = errors.New("empty files are not allowed by baidu netdisk")
 )
 
 type TokenErrResp struct {
@@ -15,12 +22,10 @@ type TokenErrResp struct {
 type File struct {
 	//TkbindId     int    `json:"tkbind_id"`
 	//OwnerType    int    `json:"owner_type"`
-	//Category     int    `json:"category"`
+	Category int `json:"category"`
 	//RealCategory string `json:"real_category"`
-	FsId        int64 `json:"fs_id"`
-	ServerMtime int64 `json:"server_mtime"`
+	FsId int64 `json:"fs_id"`
 	//OperId      int   `json:"oper_id"`
-	//ServerCtime int   `json:"server_ctime"`
 	Thumbs struct {
 		//Icon string `json:"icon"`
 		Url3 string `json:"url3"`
@@ -28,29 +33,52 @@ type File struct {
 		//Url1 string `json:"url1"`
 	} `json:"thumbs"`
 	//Wpfile         int    `json:"wpfile"`
-	//LocalMtime     int    `json:"local_mtime"`
+
 	Size int64 `json:"size"`
 	//ExtentTinyint7 int    `json:"extent_tinyint7"`
 	Path string `json:"path"`
 	//Share          int    `json:"share"`
-	//ServerAtime    int    `json:"server_atime"`
 	//Pl             int    `json:"pl"`
-	//LocalCtime     int    `json:"local_ctime"`
 	ServerFilename string `json:"server_filename"`
-	//Md5            string `json:"md5"`
+	Md5            string `json:"md5"`
 	//OwnerId        int    `json:"owner_id"`
 	//Unlist int `json:"unlist"`
 	Isdir int `json:"isdir"`
+
+	// list resp
+	ServerCtime int64 `json:"server_ctime"`
+	ServerMtime int64 `json:"server_mtime"`
+	LocalMtime  int64 `json:"local_mtime"`
+	LocalCtime  int64 `json:"local_ctime"`
+	//ServerAtime    int64    `json:"server_atime"` `
+
+	// only create and precreate resp
+	Ctime int64 `json:"ctime"`
+	Mtime int64 `json:"mtime"`
 }
 
 func fileToObj(f File) *model.ObjThumb {
+	if f.ServerFilename == "" {
+		f.ServerFilename = path.Base(f.Path)
+	}
+	if f.ServerCtime == 0 {
+		f.ServerCtime = f.Ctime
+	}
+	if f.ServerMtime == 0 {
+		f.ServerMtime = f.Mtime
+	}
 	return &model.ObjThumb{
 		Object: model.Object{
 			ID:       strconv.FormatInt(f.FsId, 10),
+			Path:     f.Path,
 			Name:     f.ServerFilename,
 			Size:     f.Size,
 			Modified: time.Unix(f.ServerMtime, 0),
+			Ctime:    time.Unix(f.ServerCtime, 0),
 			IsFolder: f.Isdir == 1,
+
+			// 直接获取的MD5是错误的
+			HashInfo: utils.NewHashInfo(utils.MD5, DecryptMd5(f.Md5)),
 		},
 		Thumbnail: model.Thumbnail{Thumbnail: f.Thumbs.Url3},
 	}
@@ -154,10 +182,39 @@ type DownloadResp2 struct {
 }
 
 type PrecreateResp struct {
-	Path       string `json:"path"`
-	Uploadid   string `json:"uploadid"`
-	ReturnType int    `json:"return_type"`
-	BlockList  []int  `json:"block_list"`
-	Errno      int    `json:"errno"`
-	RequestId  int64  `json:"request_id"`
+	Errno      int   `json:"errno"`
+	RequestId  int64 `json:"request_id"`
+	ReturnType int   `json:"return_type"`
+
+	// return_type=1
+	Path      string `json:"path"`
+	Uploadid  string `json:"uploadid"`
+	BlockList []int  `json:"block_list"`
+
+	// return_type=2
+	File File `json:"info"`
+}
+
+type UploadServerResp struct {
+	BakServer  []any `json:"bak_server"`
+	BakServers []struct {
+		Server string `json:"server"`
+	} `json:"bak_servers"`
+	ClientIP    string `json:"client_ip"`
+	ErrorCode   int    `json:"error_code"`
+	ErrorMsg    string `json:"error_msg"`
+	Expire      int    `json:"expire"`
+	Host        string `json:"host"`
+	Newno       string `json:"newno"`
+	QuicServer  []any  `json:"quic_server"`
+	QuicServers []struct {
+		Server string `json:"server"`
+	} `json:"quic_servers"`
+	RequestID  int64 `json:"request_id"`
+	Server     []any `json:"server"`
+	ServerTime int   `json:"server_time"`
+	Servers    []struct {
+		Server string `json:"server"`
+	} `json:"servers"`
+	Sl int `json:"sl"`
 }

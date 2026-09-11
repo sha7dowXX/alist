@@ -3,12 +3,12 @@ package teambition
 import (
 	"context"
 	"errors"
+	"github.com/alist-org/alist/v3/pkg/utils"
 	"net/http"
 
 	"github.com/alist-org/alist/v3/drivers/base"
 	"github.com/alist-org/alist/v3/internal/driver"
 	"github.com/alist-org/alist/v3/internal/model"
-	"github.com/alist-org/alist/v3/pkg/utils"
 	"github.com/go-resty/resty/v2"
 )
 
@@ -22,16 +22,11 @@ func (d *Teambition) Config() driver.Config {
 }
 
 func (d *Teambition) GetAddition() driver.Additional {
-	return d.Addition
+	return &d.Addition
 }
 
-func (d *Teambition) Init(ctx context.Context, storage model.Storage) error {
-	d.Storage = storage
-	err := utils.Json.UnmarshalFromString(d.Storage.Addition, &d.Addition)
-	if err != nil {
-		return err
-	}
-	_, err = d.request("/api/v2/roles", http.MethodGet, nil, nil)
+func (d *Teambition) Init(ctx context.Context) error {
+	_, err := d.request("/api/v2/roles", http.MethodGet, nil, nil)
 	return err
 }
 
@@ -42,11 +37,6 @@ func (d *Teambition) Drop(ctx context.Context) error {
 func (d *Teambition) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]model.Obj, error) {
 	return d.getFiles(dir.GetID())
 }
-
-//func (d *Teambition) Get(ctx context.Context, path string) (model.Obj, error) {
-//	//  this is optional
-//	return nil, errs.NotImplement
-//}
 
 func (d *Teambition) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	if u, ok := file.(model.URL); ok {
@@ -135,19 +125,34 @@ func (d *Teambition) Remove(ctx context.Context, obj model.Obj) error {
 }
 
 func (d *Teambition) Put(ctx context.Context, dstDir model.Obj, stream model.FileStreamer, up driver.UpdateProgress) error {
-	res, err := d.request("/projects", http.MethodGet, nil, nil)
-	if err != nil {
-		return err
+	if d.UseS3UploadMethod {
+		return d.newUpload(ctx, dstDir, stream, up)
 	}
-	token := GetBetweenStr(string(res), "strikerAuth&quot;:&quot;", "&quot;,&quot;phoneForLogin")
+	var (
+		token string
+		err   error
+	)
+	if d.isInternational() {
+		res, err := d.request("/projects", http.MethodGet, nil, nil)
+		if err != nil {
+			return err
+		}
+		token = getBetweenStr(string(res), "strikerAuth&quot;:&quot;", "&quot;,&quot;phoneForLogin")
+	} else {
+		res, err := d.request("/api/v2/users/me", http.MethodGet, nil, nil)
+		if err != nil {
+			return err
+		}
+		token = utils.Json.Get(res, "strikerAuth").ToString()
+	}
 	var newFile *FileUpload
 	if stream.GetSize() <= 20971520 {
 		// post upload
-		newFile, err = d.upload(stream, token)
+		newFile, err = d.upload(ctx, stream, token, up)
 	} else {
 		// chunk upload
 		//err = base.ErrNotImplement
-		newFile, err = d.chunkUpload(stream, token, up)
+		newFile, err = d.chunkUpload(ctx, stream, token, up)
 	}
 	if err != nil {
 		return err

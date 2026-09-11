@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"github.com/alist-org/alist/v3/internal/bootstrap/patch/v3_46_0"
 	"os"
 	"path/filepath"
 	"strconv"
 
 	"github.com/alist-org/alist/v3/internal/bootstrap"
 	"github.com/alist-org/alist/v3/internal/bootstrap/data"
+	"github.com/alist-org/alist/v3/internal/db"
 	"github.com/alist-org/alist/v3/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
@@ -15,8 +17,20 @@ func Init() {
 	bootstrap.InitConfig()
 	bootstrap.Log()
 	bootstrap.InitDB()
-	bootstrap.InitIndex()
+
+	if v3_46_0.IsLegacyRoleDetected() {
+		utils.Log.Warnf("Detected legacy role format, executing ConvertLegacyRoles patch early...")
+		v3_46_0.ConvertLegacyRoles()
+	}
+
 	data.InitData()
+	bootstrap.InitStreamLimit()
+	bootstrap.InitIndex()
+	bootstrap.InitUpgradePatch()
+}
+
+func Release() {
+	db.Close()
 }
 
 var pid = -1

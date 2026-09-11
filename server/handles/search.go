@@ -4,9 +4,9 @@ import (
 	"path"
 	"strings"
 
-	"github.com/alist-org/alist/v3/internal/db"
 	"github.com/alist-org/alist/v3/internal/errs"
 	"github.com/alist-org/alist/v3/internal/model"
+	"github.com/alist-org/alist/v3/internal/op"
 	"github.com/alist-org/alist/v3/internal/search"
 	"github.com/alist-org/alist/v3/pkg/utils"
 	"github.com/alist-org/alist/v3/server/common"
@@ -14,14 +14,28 @@ import (
 	"github.com/pkg/errors"
 )
 
+type SearchReq struct {
+	model.SearchReq
+	Password string `json:"password"`
+}
+
 type SearchResp struct {
 	model.SearchNode
 	Type int `json:"type"`
 }
 
 func Search(c *gin.Context) {
-	var req model.SearchReq
-	if err := c.ShouldBind(&req); err != nil {
+	var (
+		req SearchReq
+		err error
+	)
+	if err = c.ShouldBind(&req); err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+	user := c.MustGet("user").(*model.User)
+	req.Parent, err = user.JoinPath(req.Parent)
+	if err != nil {
 		common.ErrorResp(c, err, 400)
 		return
 	}
@@ -29,30 +43,39 @@ func Search(c *gin.Context) {
 		common.ErrorResp(c, err, 400)
 		return
 	}
-	nodes, total, err := search.Search(c, req)
-	if err != nil {
-		common.ErrorResp(c, err, 500)
-		return
-	}
-	filteredNodes := []model.SearchNode{}
-	user := c.MustGet("user").(*model.User)
-	for _, node := range nodes {
-		if !strings.HasPrefix(node.Parent, user.BasePath) {
-			continue
+	var (
+		filteredNodes []model.SearchNode
+	)
+	for len(filteredNodes) < req.PerPage {
+		nodes, _, err := search.Search(c, req.SearchReq)
+		if err != nil {
+			common.ErrorResp(c, err, 500)
+			return
 		}
-		meta, err := db.GetNearestMeta(node.Parent)
-		if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
-			continue
+		if len(nodes) == 0 {
+			break
 		}
-		if !common.CanAccess(user, meta, path.Join(node.Parent, node.Name), "") {
-			continue
+		for _, node := range nodes {
+			if !strings.HasPrefix(node.Parent, user.BasePath) {
+				continue
+			}
+			meta, err := op.GetNearestMeta(node.Parent)
+			if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+				continue
+			}
+			if !common.CanAccessWithRoles(user, meta, path.Join(node.Parent, node.Name), req.Password) {
+				continue
+			}
+			filteredNodes = append(filteredNodes, node)
+			if len(filteredNodes) >= req.PerPage {
+				break
+			}
 		}
-		// node.Parent = "/" + strings.Replace(node.Parent, user.BasePath, "", 1)
-		filteredNodes = append(filteredNodes, node)
+		req.Page++
 	}
 	common.SuccessResp(c, common.PageResp{
 		Content: utils.MustSliceConvert(filteredNodes, nodeToSearchResp),
-		Total:   total,
+		Total:   int64(len(filteredNodes)),
 	})
 }
 
